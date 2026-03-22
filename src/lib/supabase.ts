@@ -1,25 +1,31 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL;
-const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase URL or Anon Key is missing. Please check your .env file.');
+  console.warn(
+    '[HOT UNCUT] Supabase URL ou Anon Key ausentes. ' +
+    'Crie um arquivo .env.local com VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.'
+  );
 }
 
 export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '');
 
-// Helper types for the database
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 export type Profile = {
   id: string;
   email: string;
   stripe_customer_id?: string;
   plan_status: 'active' | 'trialing' | 'canceled' | 'none' | 'admin';
   is_lifetime: boolean;
+  expires_at?: string;
   name?: string;
   nickname?: string;
   avatar_url?: string;
   created_at: string;
+  updated_at?: string;
 };
 
 export type Prompt = {

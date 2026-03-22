@@ -11,7 +11,6 @@ import {
   Menu,
   X,
   Flame,
-  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from './lib/supabase';
@@ -26,7 +25,6 @@ import ProfileSection from './components/ProfileSection';
 import AuthPage from './components/AuthPage';
 import PlanSelection from './components/PlanSelection';
 import FooterAdmin from './components/FooterAdmin';
-
 import Logo from './components/Logo';
 
 type Section = 'dashboard' | 'prompts' | 'academy' | 'tools' | 'admin' | 'profile';
@@ -43,6 +41,8 @@ export default function App() {
   const [isStuck, setIsStuck] = React.useState(false);
   const [configError, setConfigError] = React.useState(false);
 
+  // BUG FIX: dependency array was [isLoggedIn, userProfile, loading] causing
+  // infinite re-renders. Changed to [] so it only runs once on mount.
   React.useEffect(() => {
     if (!supabase.auth) {
       setConfigError(true);
@@ -50,14 +50,10 @@ export default function App() {
       return;
     }
 
-    // Safety timeout: if still loading after 10s, show "stuck" UI
     const timer = setTimeout(() => {
-      if (loading || (isLoggedIn && !userProfile)) {
-        setIsStuck(true);
-      }
+      setIsStuck(true);
     }, 10000);
 
-    // Check active sessions and subscribe to auth changes
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
         setIsLoggedIn(true);
@@ -83,7 +79,8 @@ export default function App() {
       subscription.unsubscribe();
       clearTimeout(timer);
     };
-  }, [isLoggedIn, userProfile, loading]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchProfile = async (userId: string, retryCount = 0) => {
     try {
@@ -95,11 +92,9 @@ export default function App() {
 
       if (error && error.code === 'PGRST116') {
         if (retryCount < 3) {
-          // Profile might not be created by trigger yet, retry after a short delay
           setTimeout(() => fetchProfile(userId, retryCount + 1), 1000);
           return;
         } else {
-          // Fallback: Create profile if trigger failed or is missing
           const { data: { user } } = await supabase.auth.getUser();
           if (user) {
             const { data: newProfile, error: createError } = await supabase
@@ -140,22 +135,14 @@ export default function App() {
     setShowAuth(true);
   };
 
-  // Update profile when custom event fires
-  React.useEffect(() => {
-    const handleStorageChange = () => {
-      const saved = localStorage.getItem('hotmedia_current_user');
-      if (saved) setUserProfile(JSON.parse(saved));
-    };
-    window.addEventListener('storage', handleStorageChange);
-    // Also listen for a custom event since storage event only fires between tabs
-    window.addEventListener('profile-updated', handleStorageChange);
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('profile-updated', handleStorageChange);
-    };
-  }, []);
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setIsLoggedIn(false);
+    setIsAdmin(false);
+    setUserProfile(null);
+    setActiveSection('dashboard');
+  };
 
-  // Remove admin from navItems as per user request
   const navItems = [
     { id: 'dashboard', label: 'Painel Principal', icon: LayoutDashboard },
     { id: 'prompts', label: 'Biblioteca de Prompts', icon: Terminal },
@@ -184,7 +171,8 @@ export default function App() {
         <h2 className="text-2xl font-black">Erro de Configuração</h2>
         <p className="text-zinc-500 text-sm max-w-xs">
           As chaves do Supabase (URL ou Anon Key) estão faltando. 
-          Por favor, configure as variáveis de ambiente no painel de configurações.
+          Configure as variáveis <code className="text-hot-orange">VITE_SUPABASE_URL</code> e{' '}
+          <code className="text-hot-orange">VITE_SUPABASE_ANON_KEY</code> no arquivo <code>.env.local</code>.
         </p>
       </div>
     );
@@ -207,10 +195,7 @@ export default function App() {
                 Isso pode ser um problema de conexão ou configuração.
               </p>
               <button 
-                onClick={() => {
-                  supabase.auth.signOut();
-                  window.location.reload();
-                }}
+                onClick={handleLogout}
                 className="px-6 py-2 rounded-xl bg-white/5 border border-white/10 text-xs font-bold hover:bg-white/10 transition-all"
               >
                 Sair e tentar novamente
@@ -292,12 +277,9 @@ export default function App() {
             <Settings className="w-5 h-5" />
             Configurações
           </button>
+          {/* BUG FIX: logout now calls supabase.auth.signOut() properly */}
           <button 
-            onClick={() => {
-              setIsLoggedIn(false);
-              setIsAdmin(false);
-              setActiveSection('dashboard');
-            }}
+            onClick={handleLogout}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-zinc-500 hover:text-rose-400 hover:bg-rose-500/5 transition-all font-medium"
           >
             <LogOut className="w-5 h-5" />
@@ -348,6 +330,23 @@ export default function App() {
                     {item.label}
                   </button>
                 ))}
+                <button
+                  onClick={() => {
+                    setActiveSection('profile');
+                    setIsSidebarOpen(false);
+                  }}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all font-semibold text-zinc-500 hover:text-zinc-200 hover:bg-white/5"
+                >
+                  <Settings className="w-5 h-5" />
+                  Configurações
+                </button>
+                <button
+                  onClick={() => { handleLogout(); setIsSidebarOpen(false); }}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all font-semibold text-zinc-500 hover:text-rose-400 hover:bg-rose-500/5"
+                >
+                  <LogOut className="w-5 h-5" />
+                  Sair
+                </button>
               </nav>
             </motion.aside>
           </>
