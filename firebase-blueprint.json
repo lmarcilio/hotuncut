@@ -1,0 +1,91 @@
+{
+  "entities": {
+    "Profile": {
+      "title": "User Profile",
+      "description": "Stores user subscription status and Stripe information.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "stripe_customer_id": { "type": "string" },
+        "plan_status": { 
+          "type": "string", 
+          "enum": ["active", "trialing", "canceled", "none"] 
+        },
+        "is_lifetime": { "type": "boolean" }
+      },
+      "required": ["email"]
+    },
+    "Prompt": {
+      "title": "AI Prompt",
+      "description": "A reusable AI prompt for social media.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "category": { "type": "string", "enum": ["Instagram", "LinkedIn", "YouTube", "Twitter"] },
+        "difficulty": { "type": "string", "enum": ["easy", "medium", "hard"] },
+        "content": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "content", "category"]
+    },
+    "AcademyModule": {
+      "title": "Academy Module",
+      "description": "A group of lessons in the academy.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "thumbnail_url": { "type": "string", "format": "uri" }
+      },
+      "required": ["title"]
+    },
+    "AcademyLesson": {
+      "title": "Academy Lesson",
+      "description": "A single video lesson.",
+      "type": "object",
+      "properties": {
+        "module_id": { "type": "string" },
+        "title": { "type": "string" },
+        "video_url": { "type": "string", "format": "uri" },
+        "duration": { "type": "string" },
+        "order_index": { "type": "integer" }
+      },
+      "required": ["title", "video_url", "module_id"]
+    },
+    "Tool": {
+      "title": "Creator Tool",
+      "description": "A recommended tool with an affiliate link.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "icon_url": { "type": "string", "format": "uri" },
+        "link": { "type": "string", "format": "uri" },
+        "category": { "type": "string" }
+      },
+      "required": ["name", "link"]
+    }
+  },
+  "firestore": {
+    "/profiles/{userId}": {
+      "schema": "Profile",
+      "description": "User subscription and profile data."
+    },
+    "/prompts/{promptId}": {
+      "schema": "Prompt",
+      "description": "Library of AI prompts."
+    },
+    "/academy_modules/{moduleId}": {
+      "schema": "AcademyModule",
+      "description": "Modules for the social media academy."
+    },
+    "/academy_modules/{moduleId}/lessons/{lessonId}": {
+      "schema": "AcademyLesson",
+      "description": "Lessons within a specific module."
+    },
+    "/tools/{toolId}": {
+      "schema": "Tool",
+      "description": "Recommended tools for creators."
+    }
+  }
+}
