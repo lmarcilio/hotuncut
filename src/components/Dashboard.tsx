@@ -9,7 +9,7 @@ const STATS = [
   { label: 'Avaliação Média', value: '4.9/5', icon: Star, color: 'text-amber-400' },
 ];
 
-export default function Dashboard() {
+export default function Dashboard({ onLogout }: { onLogout: () => void }) {
   return (
     <div className="space-y-12">
       {/* Hero Section */}
@@ -48,8 +48,11 @@ export default function Dashboard() {
             <button className="px-8 py-4 rounded-2xl hot-gradient text-white font-bold text-lg shadow-lg shadow-hot-orange/20 hover:scale-105 transition-transform">
               Ver Cursos
             </button>
-            <button className="px-8 py-4 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold text-lg transition-all">
-              Ver Ferramentas
+            <button 
+              onClick={onLogout}
+              className="px-8 py-4 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold text-lg transition-all"
+            >
+              Sair
             </button>
           </motion.div>
         </div>

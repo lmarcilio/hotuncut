@@ -8,68 +8,99 @@ import {
   CreditCard, 
   Save, 
   Camera,
-  CheckCircle2
+  CheckCircle2,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { supabase, Profile } from '../lib/supabase';
 
-interface StudentProfile {
-  id: number;
-  name: string;
-  nickname: string;
-  email: string;
-  phone: string;
-  avatar: string;
-  plan: string;
-  expiration: string;
-  status: string;
-}
-
-export default function ProfileSection() {
-  const [profile, setProfile] = React.useState<StudentProfile>(() => {
-    const saved = localStorage.getItem('hotmedia_current_user');
-    if (saved) return JSON.parse(saved);
-    
-    // Default dummy data for demo
-    return {
-      id: 1,
-      name: 'Lucas Marcilo',
-      nickname: 'lucas_m',
-      email: 'lucasmarcilo7@gmail.com',
-      phone: '(11) 99999-9999',
-      avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Lucas',
-      plan: 'Premium Anual',
-      expiration: '2026-12-31',
-      status: 'Ativo'
-    };
+export default function ProfileSection({ userProfile, onProfileUpdate }: { userProfile: Profile | null, onProfileUpdate: () => void }) {
+  const [profile, setProfile] = React.useState<Partial<Profile>>({
+    name: userProfile?.name || '',
+    nickname: userProfile?.nickname || '',
+    email: userProfile?.email || '',
+    avatar_url: userProfile?.avatar_url || ''
   });
 
   const [isSaving, setIsSaving] = React.useState(false);
   const [showSuccess, setShowSuccess] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
   const avatarInputRef = React.useRef<HTMLInputElement>(null);
 
-  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  React.useEffect(() => {
+    if (userProfile) {
+      setProfile({
+        name: userProfile.name || '',
+        nickname: userProfile.nickname || '',
+        email: userProfile.email || '',
+        avatar_url: userProfile.avatar_url || ''
+      });
+    }
+  }, [userProfile]);
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setProfile(prev => ({ ...prev, avatar: reader.result as string }));
-    };
-    reader.readAsDataURL(file);
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !userProfile) return;
+
+    try {
+      setIsSaving(true);
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${userProfile.id}-${Math.random()}.${fileExt}`;
+      const filePath = `avatars/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(filePath);
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ avatar_url: publicUrl })
+        .eq('id', userProfile.id);
+
+      if (updateError) throw updateError;
+      
+      onProfileUpdate();
+    } catch (err: any) {
+      console.error('Error uploading avatar:', err);
+      setError('Erro ao enviar avatar. Tente novamente.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSaving(true);
+    if (!userProfile) return;
     
-    // Simulate API call
-    setTimeout(() => {
-      localStorage.setItem('hotmedia_current_user', JSON.stringify(profile));
-      window.dispatchEvent(new CustomEvent('profile-updated'));
-      setIsSaving(false);
+    setIsSaving(true);
+    setError(null);
+    
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          name: profile.name,
+          nickname: profile.nickname,
+        })
+        .eq('id', userProfile.id);
+
+      if (error) throw error;
+
+      onProfileUpdate();
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
-    }, 1000);
+    } catch (err: any) {
+      console.error('Error updating profile:', err);
+      setError('Erro ao salvar alterações. Tente novamente.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -103,7 +134,7 @@ export default function ProfileSection() {
             <div className="relative mb-6">
               <div className="w-32 h-32 rounded-[2rem] bg-zinc-800 border-4 border-[#050505] mx-auto overflow-hidden shadow-2xl relative group">
                 <img 
-                  src={profile.avatar} 
+                  src={profile.avatar_url || undefined || `https://api.dicebear.com/7.x/avataaars/svg?seed=${userProfile?.id}`} 
                   alt={profile.name}
                   className="w-full h-full object-cover"
                 />
@@ -127,19 +158,25 @@ export default function ProfileSection() {
               </div>
             </div>
 
-            <h3 className="text-xl font-black">{profile.name}</h3>
-            <p className="text-zinc-500 text-sm font-medium">@{profile.nickname}</p>
+            <h3 className="text-xl font-black">{profile.name || 'Usuário'}</h3>
+            <p className="text-zinc-500 text-sm font-medium">@{profile.nickname || 'usuario'}</p>
 
             <div className="mt-8 pt-8 border-t border-white/5 space-y-4">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-zinc-500 font-bold uppercase tracking-widest text-[10px]">Status</span>
-                <span className="px-3 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 text-[10px] font-black uppercase tracking-widest border border-emerald-500/20">
-                  {profile.status}
+                <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border ${
+                  userProfile?.plan_status === 'active' || userProfile?.plan_status === 'admin'
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                  : 'bg-zinc-500/10 text-zinc-500 border-white/5'
+                }`}>
+                  {userProfile?.plan_status === 'active' || userProfile?.plan_status === 'admin' ? 'Ativo' : 'Inativo'}
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-zinc-500 font-bold uppercase tracking-widest text-[10px]">Membro desde</span>
-                <span className="text-white font-bold">Março 2024</span>
+                <span className="text-white font-bold">
+                  {userProfile?.created_at ? new Date(userProfile.created_at).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) : 'Março 2024'}
+                </span>
               </div>
             </div>
           </div>
@@ -152,7 +189,7 @@ export default function ProfileSection() {
               </div>
               <div>
                 <h4 className="font-black text-sm uppercase tracking-widest text-zinc-500">Tipo de Plano</h4>
-                <p className="text-lg font-black">{profile.plan}</p>
+                <p className="text-lg font-black">{userProfile?.is_lifetime ? 'Vitalício' : userProfile?.plan_status === 'admin' ? 'Administrador' : 'Premium Mensal'}</p>
               </div>
             </div>
 
@@ -162,7 +199,7 @@ export default function ProfileSection() {
               </div>
               <div>
                 <h4 className="font-black text-sm uppercase tracking-widest text-zinc-500">Vencimento</h4>
-                <p className="text-lg font-black">{profile.expiration}</p>
+                <p className="text-lg font-black">{userProfile?.is_lifetime ? 'Nunca' : 'Assinatura Ativa'}</p>
               </div>
             </div>
 
@@ -185,6 +222,7 @@ export default function ProfileSection() {
                     value={profile.name}
                     onChange={(e) => setProfile({ ...profile, name: e.target.value })}
                     className="w-full bg-black/40 border border-white/5 rounded-2xl pl-12 pr-4 py-4 focus:outline-none focus:border-hot-orange transition-colors"
+                    placeholder="Seu nome"
                   />
                 </div>
               </div>
@@ -198,6 +236,7 @@ export default function ProfileSection() {
                     value={profile.nickname}
                     onChange={(e) => setProfile({ ...profile, nickname: e.target.value })}
                     className="w-full bg-black/40 border border-white/5 rounded-2xl pl-10 pr-4 py-4 focus:outline-none focus:border-hot-orange transition-colors"
+                    placeholder="apelido"
                   />
                 </div>
               </div>
@@ -209,21 +248,8 @@ export default function ProfileSection() {
                   <input 
                     type="email" 
                     value={profile.email}
-                    onChange={(e) => setProfile({ ...profile, email: e.target.value })}
-                    className="w-full bg-black/40 border border-white/5 rounded-2xl pl-12 pr-4 py-4 focus:outline-none focus:border-hot-orange transition-colors"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Telefone</label>
-                <div className="relative">
-                  <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
-                  <input 
-                    type="text" 
-                    value={profile.phone}
-                    onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
-                    className="w-full bg-black/40 border border-white/5 rounded-2xl pl-12 pr-4 py-4 focus:outline-none focus:border-hot-orange transition-colors"
+                    disabled
+                    className="w-full bg-black/20 border border-white/5 rounded-2xl pl-12 pr-4 py-4 text-zinc-500 cursor-not-allowed"
                   />
                 </div>
               </div>

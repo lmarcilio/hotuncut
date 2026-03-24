@@ -3,57 +3,7 @@ import { Terminal, Copy, Search, Eye, EyeOff, CheckCircle2, Star, Edit3, Save, X
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from '../lib/supabase';
 
-const CATEGORIES = ["Todos", "Favoritos", "Realista", "Anime", "Cyberpunk", "UNCUT SECTION", "Marketing"];
-
-const VISUAL_CATEGORIES = [
-  { id: 'Realista', name: 'Realista', image: 'https://picsum.photos/seed/realist-cat/800/400' },
-  { id: 'Anime', name: 'Anime', image: 'https://picsum.photos/seed/anime-cat/800/400' },
-  { id: 'Cyberpunk', name: 'Cyberpunk', image: 'https://picsum.photos/seed/cyber-cat/800/400' },
-  { id: 'UNCUT SECTION', name: 'UNCUT SECTION', image: 'https://picsum.photos/seed/hot-cat/800/400' },
-];
-
-const INITIAL_PROMPTS = [
-  {
-    id: 1,
-    title: "Script de Reel Viral",
-    description: "Roteiro otimizado para retenção máxima no Instagram.",
-    category: "Marketing",
-    content: "Crie um roteiro de 30 segundos para um Instagram Reel sobre [Tópico]. Comece com um gancho forte que aborde [Ponto de Dor]. Inclua 3 dicas rápidas e uma chamada para ação clara para conferir o link na bio.",
-    difficulty: "Fácil",
-    isNSFW: false,
-    previewImage: "https://picsum.photos/seed/marketing-reel/800/450"
-  },
-  {
-    id: 2,
-    title: "Waifu Estilo Cyberpunk",
-    description: "Retrato altamente detalhado de uma waifu cyberpunk.",
-    category: "Anime",
-    content: "Retrato altamente detalhado de uma waifu cyberpunk, luzes neon, chuva, estilo Ghost in the Shell, 8k, renderização unreal engine 5, cores vibrantes.",
-    difficulty: "Médio",
-    isNSFW: false,
-    previewImage: "https://picsum.photos/seed/anime-cyber/800/450"
-  },
-  {
-    id: 3,
-    title: "Modelo Fotorealista Hot",
-    description: "Fotografia profissional de modelo em estúdio.",
-    category: "UNCUT SECTION",
-    content: "Fotografia profissional de modelo em estúdio, iluminação cinematográfica, 8k, ultra realista, detalhes de pele, profundidade de campo, estilo editorial de moda.",
-    difficulty: "Difícil",
-    isNSFW: true,
-    previewImage: "https://picsum.photos/seed/hot-model/800/450"
-  },
-  {
-    id: 4,
-    title: "Paisagem Futurista",
-    description: "Cidade futurista com carros voadores e neon.",
-    category: "Cyberpunk",
-    content: "Cidade futurista com carros voadores, arquitetura brutalista, névoa, luzes de neon azuis e rosas, perspectiva de cima, detalhamento extremo.",
-    difficulty: "Médio",
-    isNSFW: false,
-    previewImage: "https://picsum.photos/seed/cyber-city/800/450"
-  }
-];
+const DEFAULT_CATEGORIES = ["Todos", "Favoritos", "UNCUT SECTION"];
 
 interface PromptsSectionProps {
   isAdmin?: boolean;
@@ -70,47 +20,128 @@ export default function PromptsSection({ isAdmin = false }: PromptsSectionProps)
   // Admin States
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
   const [editingPrompt, setEditingPrompt] = React.useState<any>(null);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = React.useState(false);
+  const [editingCategory, setEditingCategory] = React.useState<any>(null);
+  const [newCategoryName, setNewCategoryName] = React.useState('');
+  const [newCategoryImage, setNewCategoryImage] = React.useState('');
   
   // Dynamic Prompts State
-  const [prompts, setPrompts] = React.useState<any[]>([]);
+  const [prompts, setPrompts] = React.useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('hotmedia_prompts_cache');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [visualCategories, setVisualCategories] = React.useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('hotmedia_visual_categories_cache');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [categories, setCategories] = React.useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('hotmedia_categories_cache');
+      return saved ? JSON.parse(saved) : DEFAULT_CATEGORIES;
+    } catch (e) {
+      return DEFAULT_CATEGORIES;
+    }
+  });
 
   // New States for Favorites and Customizations
-  const [favorites, setFavorites] = React.useState<string[]>([]);
-  const [customPrompts, setCustomPrompts] = React.useState<Record<string, string>>({});
+  const [favorites, setFavorites] = React.useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('hotmedia_favorites_cache');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [customPrompts, setCustomPrompts] = React.useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('hotmedia_custom_prompts_cache');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
 
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [tempPrompt, setTempPrompt] = React.useState('');
-  const [loading, setLoading] = React.useState(true);
+  const [loading, setLoading] = React.useState(prompts.length === 0);
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
 
   // Fetch Prompts from Supabase
   React.useEffect(() => {
     fetchPrompts();
-  }, []);
 
-  const fetchPrompts = async () => {
-    setLoading(true);
+    const handleFocus = () => {
+      if (prompts.length === 0 && !loading) {
+        console.log('[Prompts] Refetching on focus...');
+        fetchPrompts(true);
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [prompts.length, loading]);
+
+  const fetchPrompts = async (silent = false) => {
+    if (!silent) setLoading(true);
+    else setIsRefreshing(true);
+    
+    // Safety timeout
+    const timeoutId = setTimeout(() => {
+      if (!silent) {
+        setLoading(false);
+        console.warn('Prompts fetch timed out');
+      }
+    }, 10000);
+
     try {
       const { data: { user } } = await supabase.auth.getUser();
       
-      const [promptsRes, favoritesRes, customRes] = await Promise.all([
+      const [promptsRes, visualCatsRes, favoritesRes, customRes] = await Promise.all([
         supabase.from('prompts').select('*').order('created_at', { ascending: false }),
+        supabase.from('prompt_visual_categories').select('*').order('name'),
         user ? supabase.from('user_favorites').select('prompt_id').eq('user_id', user.id) : Promise.resolve({ data: [] }),
         user ? supabase.from('user_custom_prompts').select('prompt_id, custom_content').eq('user_id', user.id) : Promise.resolve({ data: [] })
       ]);
 
-      if (promptsRes.data) setPrompts(promptsRes.data);
-      if (favoritesRes.data) setFavorites(favoritesRes.data.map((f: any) => f.prompt_id));
+      if (promptsRes.data) {
+        setPrompts(promptsRes.data);
+        localStorage.setItem('hotmedia_prompts_cache', JSON.stringify(promptsRes.data));
+      }
+      if (visualCatsRes.data) {
+        setVisualCategories(visualCatsRes.data);
+        localStorage.setItem('hotmedia_visual_categories_cache', JSON.stringify(visualCatsRes.data));
+        const dynamicCats = Array.from(new Set(visualCatsRes.data.map((c: any) => c.name)));
+        const allCats = [...DEFAULT_CATEGORIES, ...dynamicCats];
+        setCategories(allCats);
+        localStorage.setItem('hotmedia_categories_cache', JSON.stringify(allCats));
+      }
+      if (favoritesRes.data) {
+        const favIds = favoritesRes.data.map((f: any) => f.prompt_id);
+        setFavorites(favIds);
+        localStorage.setItem('hotmedia_favorites_cache', JSON.stringify(favIds));
+      }
       if (customRes.data) {
         const customMap: Record<string, string> = {};
         customRes.data.forEach((c: any) => {
           customMap[c.prompt_id] = c.custom_content;
         });
         setCustomPrompts(customMap);
+        localStorage.setItem('hotmedia_custom_prompts_cache', JSON.stringify(customMap));
       }
     } catch (err) {
       console.error('Error fetching prompts:', err);
     } finally {
-      setLoading(false);
+      clearTimeout(timeoutId);
+      if (!silent) setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -123,6 +154,8 @@ export default function PromptsSection({ isAdmin = false }: PromptsSectionProps)
     let matchesCategory = activeCategory === 'Todos' || p.category === activeCategory;
     if (activeCategory === 'Favoritos') {
       matchesCategory = favorites.includes(p.id);
+    } else if (activeCategory === 'UNCUT SECTION') {
+      matchesCategory = p.is_nsfw === true;
     }
     
     return matchesSearch && matchesCategory;
@@ -228,16 +261,74 @@ export default function PromptsSection({ isAdmin = false }: PromptsSectionProps)
       if (error) alert(error.message);
     }
     
-    fetchPrompts();
+    fetchPrompts(true);
     setIsAddModalOpen(false);
     setEditingPrompt(null);
+  };
+
+  const handleAddCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCategoryName.trim()) return;
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Sessão não encontrada.");
+
+      if (editingCategory) {
+        // Atualizar categoria existente
+        const { error } = await supabase
+          .from('prompt_visual_categories')
+          .update({ 
+            name: newCategoryName.trim(),
+            image_url: newCategoryImage.trim() || 'https://picsum.photos/seed/cat/800/450'
+          })
+          .eq('id', editingCategory.id);
+        
+        if (error) throw error;
+      } else {
+        // Inserir nova categoria
+        const { error } = await supabase
+          .from('prompt_visual_categories')
+          .insert([{ 
+            name: newCategoryName.trim(),
+            image_url: newCategoryImage.trim() || 'https://picsum.photos/seed/cat/800/450'
+          }]);
+        
+        if (error) throw error;
+      }
+
+      setNewCategoryName('');
+      setNewCategoryImage('');
+      setEditingCategory(null);
+      fetchPrompts(true);
+    } catch (error: any) {
+      console.error('Error saving category:', error);
+      alert(`Erro ao salvar categoria: ${error.message}`);
+    }
+  };
+
+  const handleDeleteCategory = async (category: any) => {
+    if (confirm(`Excluir a categoria "${category.name}"? Isso não excluirá os prompts, mas eles ficarão sem categoria.`)) {
+      try {
+        const { error } = await supabase
+          .from('prompt_visual_categories')
+          .delete()
+          .eq('id', category.id);
+        
+        if (error) throw error;
+        fetchPrompts(true);
+      } catch (error: any) {
+        console.error('Error deleting category:', error);
+        alert(`Erro ao excluir categoria: ${error.message}`);
+      }
+    }
   };
 
   const deletePrompt = async (id: string) => {
     if (confirm('Excluir este prompt?')) {
       const { error } = await supabase.from('prompts').delete().eq('id', id);
       if (error) alert(error.message);
-      fetchPrompts();
+      fetchPrompts(true);
     }
   };
 
@@ -246,20 +337,40 @@ export default function PromptsSection({ isAdmin = false }: PromptsSectionProps)
       {/* Header Section */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <h2 className="text-4xl font-display font-black tracking-tight">Biblioteca de <span className="hot-text-gradient">Prompts</span></h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-4xl font-display font-black tracking-tight">Biblioteca de <span className="hot-text-gradient">Prompts</span></h2>
+            {isRefreshing && (
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="flex items-center gap-2 px-3 py-1 rounded-full bg-hot-orange/10 border border-hot-orange/20 text-hot-orange text-[10px] font-black uppercase tracking-widest"
+              >
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Atualizando...
+              </motion.div>
+            )}
+          </div>
           <p className="text-zinc-500 mt-1">Acesse a engenharia definitiva para seus conteúdos.</p>
         </div>
         <div className="flex items-center gap-4">
           {isAdmin && (
-            <button 
-              onClick={() => {
-                setEditingPrompt(null);
-                setIsAddModalOpen(true);
-              }}
-              className="px-6 py-2.5 rounded-xl hot-gradient text-white font-bold text-sm shadow-lg shadow-hot-orange/20 flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" /> Adicionar Novo Prompt
-            </button>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setIsCategoryModalOpen(true)}
+                className="px-6 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white font-bold text-sm hover:bg-white/10 transition-all flex items-center gap-2"
+              >
+                Gerenciar Categorias
+              </button>
+              <button 
+                onClick={() => {
+                  setEditingPrompt(null);
+                  setIsAddModalOpen(true);
+                }}
+                className="px-6 py-2.5 rounded-xl hot-gradient text-white font-bold text-sm shadow-lg shadow-hot-orange/20 flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" /> Adicionar Novo Prompt
+              </button>
+            </div>
           )}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
@@ -289,7 +400,7 @@ export default function PromptsSection({ isAdmin = false }: PromptsSectionProps)
 
       {/* Chips de Categoria */}
       <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-        {CATEGORIES.map(cat => (
+        {categories.map(cat => (
           <button
             key={cat}
             onClick={() => setActiveCategory(cat)}
@@ -308,16 +419,16 @@ export default function PromptsSection({ isAdmin = false }: PromptsSectionProps)
 
       {/* Visual Categories Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {VISUAL_CATEGORIES.map((cat) => (
+        {visualCategories.map((cat) => (
           <button
             key={cat.id}
-            onClick={() => setActiveCategory(cat.id)}
+            onClick={() => setActiveCategory(cat.name)}
             className={`relative aspect-video rounded-2xl overflow-hidden group transition-all border-2 ${
-              activeCategory === cat.id ? 'border-hot-orange shadow-lg shadow-hot-orange/20' : 'border-transparent'
+              activeCategory === cat.name ? 'border-hot-orange shadow-lg shadow-hot-orange/20' : 'border-transparent'
             }`}
           >
-            <img src={cat.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt={cat.name} />
-            <div className={`absolute inset-0 bg-black/60 flex flex-col items-center justify-center text-center p-4 transition-colors ${activeCategory === cat.id ? 'bg-black/40' : 'group-hover:bg-black/50'}`}>
+            <img src={cat.image_url || undefined} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt={cat.name} referrerPolicy="no-referrer" />
+            <div className={`absolute inset-0 bg-black/60 flex flex-col items-center justify-center text-center p-4 transition-colors ${activeCategory === cat.name ? 'bg-black/40' : 'group-hover:bg-black/50'}`}>
               <span className="text-xl md:text-2xl font-display font-black uppercase tracking-widest leading-none">{cat.name}</span>
               <span className="text-[10px] md:text-xs font-bold text-hot-orange/80 uppercase tracking-widest mt-2">Imagens e Vídeos Realistas</span>
             </div>
@@ -327,8 +438,20 @@ export default function PromptsSection({ isAdmin = false }: PromptsSectionProps)
 
       {/* Prompts Grid */}
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-10 h-10 text-hot-orange animate-spin" />
+        <div className="flex flex-col items-center justify-center py-20 gap-6">
+          <div className="relative">
+            <Loader2 className="w-10 h-10 text-hot-orange animate-spin" />
+            <div className="absolute inset-0 blur-xl bg-hot-orange/20 animate-pulse" />
+          </div>
+          <div className="text-center space-y-2">
+            <p className="text-zinc-500 font-medium">Carregando prompts...</p>
+            <button 
+              onClick={() => fetchPrompts()}
+              className="text-xs text-hot-orange hover:underline font-bold uppercase tracking-widest"
+            >
+              Tentar novamente
+            </button>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -383,6 +506,23 @@ export default function PromptsSection({ isAdmin = false }: PromptsSectionProps)
                     <Star className={`w-5 h-5 ${isFavorited ? 'fill-hot-orange' : ''}`} />
                   </button>
                 </div>
+
+                {/* Preview Image */}
+                {prompt.preview_image && (
+                  <div className="relative aspect-video rounded-2xl overflow-hidden border border-white/5">
+                    <img 
+                      src={prompt.preview_image} 
+                      className={`w-full h-full object-cover transition-all duration-500 ${prompt.is_nsfw && !isRevealed ? 'blur-xl scale-110' : ''}`} 
+                      alt={prompt.title}
+                      referrerPolicy="no-referrer"
+                    />
+                    {prompt.is_nsfw && !isRevealed && (
+                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                        <Shield className="w-8 h-8 text-hot-red opacity-50" />
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Badges Row */}
                 <div className="flex items-center gap-2">
@@ -550,6 +690,120 @@ export default function PromptsSection({ isAdmin = false }: PromptsSectionProps)
 
       {/* Admin Add/Edit Modal */}
       <AnimatePresence>
+        {isCategoryModalOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsCategoryModalOpen(false)}
+              className="absolute inset-0 bg-black/90 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-xl bg-[#141414] p-8 rounded-[2.5rem] border border-[#1F1F1F] shadow-2xl"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <h3 className="text-2xl font-display font-black">
+                  {editingCategory ? 'Editar Categoria' : 'Gerenciar Categorias'}
+                </h3>
+                <button 
+                  onClick={() => {
+                    setIsCategoryModalOpen(false);
+                    setEditingCategory(null);
+                    setNewCategoryName('');
+                    setNewCategoryImage('');
+                  }} 
+                  className="p-2 rounded-xl hover:bg-white/5"
+                >
+                  <X className="w-6 h-6 text-zinc-500" />
+                </button>
+              </div>
+
+              <div className="space-y-8">
+                <form onSubmit={handleAddCategory} className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase tracking-widest text-zinc-500 ml-1">Nome da Categoria</label>
+                    <input 
+                      value={newCategoryName}
+                      onChange={(e) => setNewCategoryName(e.target.value)}
+                      placeholder="Ex: Realismo"
+                      autoFocus
+                      className="w-full px-6 py-4 rounded-2xl bg-[#1F1F1F] border border-[#2F2F2F] focus:border-hot-orange focus:outline-none transition-all text-white placeholder:text-zinc-700"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase tracking-widest text-zinc-500 ml-1">URL da Imagem</label>
+                    <input 
+                      value={newCategoryImage}
+                      onChange={(e) => setNewCategoryImage(e.target.value)}
+                      placeholder="https://..."
+                      className="w-full px-6 py-4 rounded-2xl bg-[#1F1F1F] border border-[#2F2F2F] focus:border-hot-orange focus:outline-none transition-all text-white placeholder:text-zinc-700"
+                    />
+                  </div>
+                  <div className="flex gap-3">
+                    {editingCategory && (
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setEditingCategory(null);
+                          setNewCategoryName('');
+                          setNewCategoryImage('');
+                        }}
+                        className="flex-1 py-4 rounded-2xl bg-zinc-800 text-white font-bold transition-all"
+                      >
+                        Cancelar
+                      </button>
+                    )}
+                    <button type="submit" className="flex-[2] py-4 rounded-2xl hot-gradient text-white font-bold shadow-lg shadow-hot-orange/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2">
+                      {editingCategory ? <Save className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+                      {editingCategory ? 'Salvar Alterações' : 'Adicionar Categoria'}
+                    </button>
+                  </div>
+                </form>
+
+                <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                  {visualCategories.map(cat => (
+                    <div key={cat.id} className="flex items-center justify-between p-4 rounded-2xl bg-white/[0.02] border border-white/5 group hover:bg-white/[0.04] transition-all">
+                      <div className="flex items-center gap-4">
+                        {cat.image_url && (
+                          <img 
+                            src={cat.image_url} 
+                            alt={cat.name} 
+                            className="w-10 h-10 rounded-xl object-cover border border-white/10"
+                            referrerPolicy="no-referrer"
+                          />
+                        )}
+                        <span className="font-bold text-zinc-300 group-hover:text-white transition-colors">{cat.name}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => {
+                            setEditingCategory(cat);
+                            setNewCategoryName(cat.name);
+                            setNewCategoryImage(cat.image_url || '');
+                          }}
+                          className="p-2 rounded-xl text-zinc-600 hover:text-hot-orange hover:bg-hot-orange/10 transition-all"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteCategory(cat)}
+                          className="p-2 rounded-xl text-zinc-600 hover:text-rose-500 hover:bg-rose-500/10 transition-all"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {isAddModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
             <motion.div 
@@ -582,7 +836,7 @@ export default function PromptsSection({ isAdmin = false }: PromptsSectionProps)
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-zinc-500 ml-1">Categoria</label>
                   <select name="category" defaultValue={editingPrompt?.category} className="w-full px-4 py-3 rounded-xl bg-[#1F1F1F] border border-[#2F2F2F] focus:border-hot-orange focus:outline-none transition-colors">
-                    {CATEGORIES.filter(c => c !== 'Todos' && c !== 'Favoritos').map(c => <option key={c} value={c}>{c}</option>)}
+                    {categories.filter(c => c !== 'Todos' && c !== 'Favoritos').map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div className="space-y-2">

@@ -1,31 +1,29 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL;
+const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn(
-    '[HOT UNCUT] Supabase URL ou Anon Key ausentes. ' +
-    'Crie um arquivo .env.local com VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.'
-  );
+export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey);
+
+if (!isSupabaseConfigured) {
+  console.error('Supabase URL or Anon Key is missing. Please check your .env file or Netlify environment variables.');
 }
 
-export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '');
+export const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder');
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
+// Helper types for the database
 export type Profile = {
   id: string;
   email: string;
   stripe_customer_id?: string;
   plan_status: 'active' | 'trialing' | 'canceled' | 'none' | 'admin';
+  plan_type?: string;
+  phone?: string;
   is_lifetime: boolean;
-  expires_at?: string;
   name?: string;
   nickname?: string;
   avatar_url?: string;
   created_at: string;
-  updated_at?: string;
 };
 
 export type Prompt = {
@@ -72,6 +70,13 @@ export type Tool = {
   link: string;
   category?: string;
   is_hot: boolean;
+  image_url?: string;
+  created_at: string;
+};
+
+export type PromptVisualCategory = {
+  id: string;
+  name: string;
   image_url?: string;
   created_at: string;
 };

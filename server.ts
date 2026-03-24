@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -9,7 +8,7 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+  const PORT = 3000;
 
   // API Routes
   app.get("/api/health", (req, res) => {
@@ -24,10 +23,9 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, "dist");
+    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    // Wildcard must use a function (string glob deprecated in Express 5)
-    app.get("*", (_req, res) => {
+    app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

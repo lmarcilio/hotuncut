@@ -20,7 +20,9 @@ import {
   Link as LinkIcon,
   CheckCircle2,
   AlertCircle,
-  Settings
+  Settings,
+  ArrowRight,
+  LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Logo from './Logo';
@@ -128,39 +130,64 @@ const INITIAL_STUDENTS = [
   { id: 2, name: 'Ana Silva', email: 'ana@example.com', phone: '(21) 98888-8888', status: 'Inativo', expiration: '2024-01-15', plan: 'Mensal' },
 ];
 
-export default function AdminDashboard() {
+export default function AdminDashboard({ onBack, onLogout }: { onBack: () => void, onLogout?: () => void }) {
   const [activeTab, setActiveTab] = React.useState<'prompts' | 'academy' | 'tools' | 'students' | 'settings'>('prompts');
   const [activeSubTab, setActiveSubTab] = React.useState<'items' | 'modules' | 'categories'>('items');
   const [logoUrl, setLogoUrl] = React.useState(() => localStorage.getItem('hotuncut_logo_url') || '');
   const [logoHeight, setLogoHeight] = React.useState(() => parseInt(localStorage.getItem('hotuncut_logo_height') || '56'));
-  const [loading, setLoading] = React.useState(true);
+  const [loading, setLoading] = React.useState(() => {
+    const saved = localStorage.getItem('hotmedia_admin_prompts_cache');
+    return !saved;
+  });
 
   React.useEffect(() => {
     fetchData();
   }, []);
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [
         { data: promptsData },
+        { data: visualCategoriesData },
         { data: modulesData },
         { data: toolsData },
         { data: categoriesData },
         { data: profilesData }
       ] = await Promise.all([
         supabase.from('prompts').select('*').order('created_at', { ascending: false }),
+        supabase.from('prompt_visual_categories').select('*').order('name'),
         supabase.from('academy_modules').select('*, academy_lessons(*)').order('order_index'),
         supabase.from('tools').select('*').order('created_at', { ascending: false }),
         supabase.from('tool_categories').select('*').order('name'),
         supabase.from('profiles').select('*')
       ]);
 
-      if (promptsData) setPrompts(promptsData);
-      if (modulesData) setAcademyModules(modulesData.map(m => ({ ...m, lessons: m.academy_lessons || [] })));
-      if (toolsData) setTools(toolsData);
-      if (categoriesData) setToolCategories(categoriesData.map(c => c.name));
-      if (profilesData) setStudents(profilesData);
+      if (promptsData) {
+        setPrompts(promptsData);
+        localStorage.setItem('hotmedia_admin_prompts_cache', JSON.stringify(promptsData));
+      }
+      if (visualCategoriesData) {
+        setVisualCategories(visualCategoriesData);
+        localStorage.setItem('hotmedia_admin_visual_categories_cache', JSON.stringify(visualCategoriesData));
+      }
+      if (modulesData) {
+        const mappedModules = modulesData.map(m => ({ ...m, lessons: m.academy_lessons || [] }));
+        setAcademyModules(mappedModules);
+        localStorage.setItem('hotmedia_admin_academy_cache', JSON.stringify(mappedModules));
+      }
+      if (toolsData) {
+        setTools(toolsData);
+        localStorage.setItem('hotmedia_admin_tools_cache', JSON.stringify(toolsData));
+      }
+      if (categoriesData) {
+        setToolCategories(categoriesData);
+        localStorage.setItem('hotmedia_admin_tool_categories_cache', JSON.stringify(categoriesData));
+      }
+      if (profilesData) {
+        setStudents(profilesData);
+        localStorage.setItem('hotmedia_admin_students_cache', JSON.stringify(profilesData));
+      }
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -188,33 +215,97 @@ export default function AdminDashboard() {
   const [itemToDelete, setItemToDelete] = React.useState<any>(null);
 
   // Data States
-  const [prompts, setPrompts] = React.useState<any[]>([]);
-  const [academyModules, setAcademyModules] = React.useState<any[]>([]);
-  const [tools, setTools] = React.useState<any[]>([]);
-  const [toolCategories, setToolCategories] = React.useState<string[]>([]);
-  const [students, setStudents] = React.useState<any[]>([]);
+  const [prompts, setPrompts] = React.useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('hotmedia_admin_prompts_cache');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [visualCategories, setVisualCategories] = React.useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('hotmedia_admin_visual_categories_cache');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [academyModules, setAcademyModules] = React.useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('hotmedia_admin_academy_cache');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [tools, setTools] = React.useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('hotmedia_admin_tools_cache');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [toolCategories, setToolCategories] = React.useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('hotmedia_admin_tool_categories_cache');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [students, setStudents] = React.useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('hotmedia_admin_students_cache');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget as HTMLFormElement);
     
-    if (activeTab === 'prompts') {
-      const newItem = {
-        title: formData.get('title'),
-        description: formData.get('description'),
-        category: formData.get('category'),
-        difficulty: formData.get('difficulty'),
-        content: formData.get('content'),
-        is_nsfw: formData.get('isNSFW') === 'on',
-        preview_image: formData.get('previewImage') || 'https://picsum.photos/seed/prompt/800/450'
-      };
+    // Check authentication
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      alert('Sessão do Supabase não encontrada. Por favor, faça login novamente com um email real para gerenciar o conteúdo.');
+      return;
+    }
 
-      if (editingItem) {
-        const { error } = await supabase.from('prompts').update(newItem).eq('id', editingItem.id);
-        if (error) alert(error.message);
+    if (activeTab === 'prompts') {
+      if (activeSubTab === 'categories') {
+        const newItem = {
+          name: formData.get('title') as string || formData.get('name') as string,
+          image_url: formData.get('imageUrl') as string
+        };
+        if (editingItem) {
+          const { error } = await supabase.from('prompt_visual_categories').update(newItem).eq('id', editingItem.id);
+          if (error) alert(error.message);
+        } else {
+          const { error } = await supabase.from('prompt_visual_categories').insert(newItem);
+          if (error) alert(error.message);
+        }
       } else {
-        const { error } = await supabase.from('prompts').insert(newItem);
-        if (error) alert(error.message);
+        const newItem = {
+          title: formData.get('title'),
+          description: formData.get('description'),
+          category: formData.get('category'),
+          difficulty: formData.get('difficulty'),
+          content: formData.get('content'),
+          is_nsfw: formData.get('isNSFW') === 'on',
+          preview_image: formData.get('previewImage') || 'https://picsum.photos/seed/prompt/800/450'
+        };
+
+        if (editingItem) {
+          const { error } = await supabase.from('prompts').update(newItem).eq('id', editingItem.id);
+          if (error) alert(error.message);
+        } else {
+          const { error } = await supabase.from('prompts').insert(newItem);
+          if (error) alert(error.message);
+        }
       }
     } else if (activeTab === 'academy') {
       if (activeSubTab === 'modules') {
@@ -230,15 +321,24 @@ export default function AdminDashboard() {
           if (error) alert(error.message);
         }
       } else {
+        const videoUrl = formData.get('videoUrl') as string;
+        const fileUrl = formData.get('fileUrl') as string;
+        const moduleId = formData.get('module_id') as string;
+
+        if (!moduleId) {
+          alert('Por favor, selecione um módulo para a aula.');
+          return;
+        }
+
         const newItem = {
           title: formData.get('title'),
           description: formData.get('description'),
-          module_id: formData.get('moduleId'),
-          video_url: formData.get('videoUrl'),
+          module_id: moduleId,
+          video_url: videoUrl,
           image_url: formData.get('imageUrl'),
-          file_url: formData.get('fileUrl'),
+          file_url: fileUrl,
           file_name: formData.get('fileName'),
-          type: formData.get('videoUrl') ? 'video' : formData.get('fileUrl') ? 'file' : 'image'
+          type: videoUrl ? 'video' : fileUrl ? 'file' : 'image'
         };
         
         if (editingItem) {
@@ -251,17 +351,19 @@ export default function AdminDashboard() {
       }
     } else if (activeTab === 'tools') {
       if (activeSubTab === 'categories') {
-        const name = formData.get('name') as string;
+        const name = formData.get('title') as string || formData.get('name') as string;
+        const imageUrl = formData.get('imageUrl') as string;
+        const newItem = { name, image_url: imageUrl };
         if (editingItem) {
-          const { error } = await supabase.from('tool_categories').update({ name }).eq('name', editingItem);
+          const { error } = await supabase.from('tool_categories').update(newItem).eq('id', editingItem.id);
           if (error) alert(error.message);
         } else {
-          const { error } = await supabase.from('tool_categories').insert({ name });
+          const { error } = await supabase.from('tool_categories').insert(newItem);
           if (error) alert(error.message);
         }
       } else {
         const newItem = {
-          name: formData.get('name'),
+          name: formData.get('title') || formData.get('name'),
           description: formData.get('description'),
           link: formData.get('url'),
           category: formData.get('category'),
@@ -278,20 +380,23 @@ export default function AdminDashboard() {
       }
     } else if (activeTab === 'students') {
       const newItem = {
-        name: formData.get('name'),
+        name: formData.get('title') || formData.get('name'),
         email: formData.get('email'),
+        phone: formData.get('phone'),
         plan_status: formData.get('status') === 'Ativo' ? 'active' : 'none',
-        nickname: formData.get('nickname'),
-        avatar_url: formData.get('avatarUrl'),
+        plan_type: formData.get('plan'),
         expires_at: formData.get('expires_at') ? new Date(formData.get('expires_at') as string).toISOString() : null
       };
       if (editingItem) {
         const { error } = await supabase.from('profiles').update(newItem).eq('id', editingItem.id);
         if (error) alert(error.message);
+      } else {
+        const { error } = await supabase.from('profiles').insert(newItem);
+        if (error) alert(error.message);
       }
     }
 
-    fetchData();
+    fetchData(true);
     setIsModalOpen(false);
     setEditingItem(null);
   };
@@ -301,7 +406,11 @@ export default function AdminDashboard() {
     
     let error;
     if (activeTab === 'prompts') {
-      ({ error } = await supabase.from('prompts').delete().eq('id', itemToDelete.id));
+      if (activeSubTab === 'categories') {
+        ({ error } = await supabase.from('prompt_visual_categories').delete().eq('id', itemToDelete.id));
+      } else {
+        ({ error } = await supabase.from('prompts').delete().eq('id', itemToDelete.id));
+      }
     } else if (activeTab === 'academy') {
       if (activeSubTab === 'modules') {
         ({ error } = await supabase.from('academy_modules').delete().eq('id', itemToDelete.id));
@@ -310,7 +419,7 @@ export default function AdminDashboard() {
       }
     } else if (activeTab === 'tools') {
       if (activeSubTab === 'categories') {
-        ({ error } = await supabase.from('tool_categories').delete().eq('name', itemToDelete));
+        ({ error } = await supabase.from('tool_categories').delete().eq('id', itemToDelete.id));
       } else {
         ({ error } = await supabase.from('tools').delete().eq('id', itemToDelete.id));
       }
@@ -319,7 +428,7 @@ export default function AdminDashboard() {
     }
 
     if (error) alert(error.message);
-    fetchData();
+    fetchData(true);
     setIsDeleteConfirmOpen(false);
     setItemToDelete(null);
   };
@@ -338,7 +447,7 @@ export default function AdminDashboard() {
   };
 
   const currentItems = activeTab === 'prompts' 
-    ? prompts 
+    ? (activeSubTab === 'categories' ? visualCategories : prompts)
     : activeTab === 'academy' 
       ? activeSubTab === 'modules' ? [...academyModules].sort((a, b) => (a.order_index || 0) - (b.order_index || 0)) : academyModules.flatMap((m: any) => m.lessons)
       : activeTab === 'tools'
@@ -349,6 +458,12 @@ export default function AdminDashboard() {
     <div className="space-y-10">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="flex items-center gap-4">
+          <button 
+            onClick={onBack}
+            className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-zinc-400 hover:text-white transition-all"
+          >
+            <ArrowRight className="w-5 h-5 rotate-180" />
+          </button>
           <Logo size="lg" />
           <div className="h-12 w-px bg-white/10 mx-2 hidden md:block" />
           <div>
@@ -356,19 +471,31 @@ export default function AdminDashboard() {
             <p className="text-zinc-500 mt-1">Gerencie o conteúdo da sua plataforma e monitore o crescimento.</p>
           </div>
         </div>
-        <button 
-          onClick={() => {
-            setEditingItem(null);
-            setIsModalOpen(true);
-          }}
-          className="px-6 py-3 rounded-xl hot-gradient text-white font-bold flex items-center gap-2 shadow-lg shadow-hot-orange/20 transition-all hover:scale-105 active:scale-95"
-        >
-          <Plus className="w-5 h-5" />
-          {activeTab === 'prompts' && 'Novo Prompt'}
-          {activeTab === 'academy' && (activeSubTab === 'modules' ? 'Novo Módulo' : 'Nova Aula')}
-          {activeTab === 'tools' && (activeSubTab === 'categories' ? 'Nova Categoria' : 'Nova Ferramenta')}
-          {activeTab === 'students' && 'Novo Aluno'}
-        </button>
+        <div className="flex items-center gap-3">
+          {onLogout && (
+            <button 
+              onClick={onLogout}
+              className="px-6 py-3 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-500 font-bold flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
+              title="Sair do Sistema"
+            >
+              <LogOut className="w-5 h-5" />
+              <span className="hidden md:inline">Sair</span>
+            </button>
+          )}
+          <button 
+            onClick={() => {
+              setEditingItem(null);
+              setIsModalOpen(true);
+            }}
+            className="px-6 py-3 rounded-xl hot-gradient text-white font-bold flex items-center gap-2 shadow-lg shadow-hot-orange/20 transition-all hover:scale-105 active:scale-95"
+          >
+            <Plus className="w-5 h-5" />
+            {activeTab === 'prompts' && (activeSubTab === 'categories' ? 'Nova Categoria' : 'Novo Prompt')}
+            {activeTab === 'academy' && (activeSubTab === 'modules' ? 'Novo Módulo' : 'Nova Aula')}
+            {activeTab === 'tools' && (activeSubTab === 'categories' ? 'Nova Categoria' : 'Nova Ferramenta')}
+            {activeTab === 'students' && 'Novo Aluno'}
+          </button>
+        </div>
       </div>
 
       {/* Stats Grid */}
@@ -411,6 +538,23 @@ export default function AdminDashboard() {
             </button>
           ))}
         </div>
+
+        {activeTab === 'prompts' && (
+          <div className="flex items-center gap-4 border-b border-white/5 pb-4">
+            <button 
+              onClick={() => setActiveSubTab('items')}
+              className={`text-sm font-bold transition-colors ${activeSubTab === 'items' ? 'text-hot-orange' : 'text-zinc-500 hover:text-white'}`}
+            >
+              Prompts
+            </button>
+            <button 
+              onClick={() => setActiveSubTab('categories')}
+              className={`text-sm font-bold transition-colors ${activeSubTab === 'categories' ? 'text-hot-orange' : 'text-zinc-500 hover:text-white'}`}
+            >
+              Categorias Visuais
+            </button>
+          </div>
+        )}
 
         {activeTab === 'academy' && (
           <div className="flex items-center gap-4 border-b border-white/5 pb-4">
@@ -538,11 +682,29 @@ export default function AdminDashboard() {
 
             <div className="pt-6 border-t border-white/5 flex gap-4">
               <button 
-                onClick={() => {
-                  localStorage.setItem('hotuncut_logo_url', logoUrl);
-                  localStorage.setItem('hotuncut_logo_height', logoHeight.toString());
-                  window.dispatchEvent(new CustomEvent('logo-updated'));
-                  alert('Configurações salvas com sucesso!');
+                onClick={async () => {
+                  try {
+                    // Salva no localStorage para feedback imediato
+                    localStorage.setItem('hotuncut_logo_url', logoUrl);
+                    localStorage.setItem('hotuncut_logo_height', logoHeight.toString());
+                    window.dispatchEvent(new CustomEvent('logo-updated'));
+
+                    // Salva no Supabase para persistência real
+                    const { error } = await supabase
+                      .from('site_settings')
+                      .upsert({ 
+                        id: 'global', 
+                        logo_url: logoUrl, 
+                        logo_height: logoHeight,
+                        updated_at: new Date().toISOString()
+                      });
+
+                    if (error) throw error;
+                    alert('Configurações salvas com sucesso no banco de dados!');
+                  } catch (err: any) {
+                    console.error('Error saving settings:', err);
+                    alert('Configurações salvas localmente, mas houve um erro ao salvar no banco: ' + err.message);
+                  }
                 }}
                 className="px-8 py-3 rounded-xl hot-gradient text-white font-bold shadow-lg shadow-hot-orange/20 transition-all hover:scale-105 active:scale-95 flex items-center gap-2"
               >
@@ -550,12 +712,24 @@ export default function AdminDashboard() {
                 Salvar Configurações
               </button>
               <button 
-                onClick={() => {
-                  setLogoUrl('');
-                  setLogoHeight(56);
-                  localStorage.removeItem('hotuncut_logo_url');
-                  localStorage.removeItem('hotuncut_logo_height');
-                  window.dispatchEvent(new CustomEvent('logo-updated'));
+                onClick={async () => {
+                  if (confirm('Deseja realmente resetar a logo para o padrão?')) {
+                    setLogoUrl('');
+                    setLogoHeight(56);
+                    localStorage.removeItem('hotuncut_logo_url');
+                    localStorage.removeItem('hotuncut_logo_height');
+                    
+                    try {
+                      await supabase
+                        .from('site_settings')
+                        .update({ logo_url: null, logo_height: 56 })
+                        .eq('id', 'global');
+                    } catch (err) {
+                      console.error('Error resetting settings:', err);
+                    }
+                    
+                    window.dispatchEvent(new CustomEvent('logo-updated'));
+                  }
                 }}
                 className="px-8 py-3 rounded-xl bg-white/5 border border-white/5 text-zinc-400 font-bold transition-all hover:bg-white/10"
               >
@@ -603,13 +777,15 @@ export default function AdminDashboard() {
                       <div className="flex items-center gap-4">
                         <div className="w-12 h-12 rounded-xl bg-black/40 border border-white/5 flex items-center justify-center text-zinc-500 overflow-hidden">
                           {activeTab === 'prompts' ? (
-                            <Terminal className="w-6 h-6" />
+                            activeSubTab === 'categories' ? <img src={item.image_url || undefined} className="w-full h-full object-cover" alt="" /> : <Terminal className="w-6 h-6" />
                           ) : activeTab === 'academy' ? (
-                            activeSubTab === 'modules' ? <GraduationCap className="w-6 h-6" /> : (item.videoUrl ? <Youtube className="w-6 h-6" /> : <FileText className="w-6 h-6" />)
+                            activeSubTab === 'modules' ? <GraduationCap className="w-6 h-6" /> : (item.video_url ? <Youtube className="w-6 h-6" /> : <FileText className="w-6 h-6" />)
                           ) : activeTab === 'students' ? (
                             <Users className="w-6 h-6" />
                           ) : (
-                            activeSubTab === 'categories' ? <Filter className="w-6 h-6" /> : <img src={item.imageUrl || item.image} className="w-full h-full object-cover" alt="" />
+                            activeSubTab === 'categories' ? (
+                              item.image_url ? <img src={item.image_url || undefined} className="w-full h-full object-cover" alt="" /> : <Filter className="w-6 h-6" />
+                            ) : <img src={item.image_url || undefined} className="w-full h-full object-cover" alt="" />
                           )}
                         </div>
                         <div>
@@ -617,7 +793,7 @@ export default function AdminDashboard() {
                           <p className="text-xs text-zinc-500 line-clamp-1">
                             {activeTab === 'students' 
                               ? `Membro desde: ${new Date(item.created_at).toLocaleDateString('pt-BR')}` 
-                              : item.description || (activeSubTab === 'categories' ? 'Categoria de Ferramenta' : activeSubTab === 'modules' ? 'Módulo da Academia' : '')}
+                              : item.description || (activeSubTab === 'categories' ? 'Categoria' : activeSubTab === 'modules' ? 'Módulo da Academia' : '')}
                           </p>
                         </div>
                       </div>
@@ -653,7 +829,7 @@ export default function AdminDashboard() {
                       activeSubTab === 'items' && (
                         <td className="px-8 py-5">
                           <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg bg-white/5 text-zinc-400 border border-white/5">
-                            {activeTab === 'academy' ? academyModules.find((m: any) => m.id === item.moduleId)?.title : item.category || 'Geral'}
+                            {activeTab === 'academy' ? academyModules.find((m: any) => m.id === item.module_id)?.title : item.category || 'Geral'}
                           </span>
                         </td>
                       )
@@ -727,15 +903,27 @@ export default function AdminDashboard() {
               <form onSubmit={handleSave} className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* Common Fields */}
-                  {((activeTab === 'academy' && activeSubTab === 'modules') || (activeTab === 'tools' && activeSubTab === 'categories')) ? (
+                  {((activeTab === 'academy' && activeSubTab === 'modules') || (activeTab === 'tools' && activeSubTab === 'categories') || (activeTab === 'prompts' && activeSubTab === 'categories')) ? (
                     <div className="md:col-span-2 space-y-2">
                       <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Nome / Título</label>
-                      <input name="title" defaultValue={editingItem?.title || editingItem?.name || editingItem} required className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
-                      <input type="hidden" name="name" defaultValue={editingItem?.title || editingItem?.name || editingItem} />
+                      <input name="name" defaultValue={editingItem?.title || editingItem?.name || editingItem} required className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
+                      <input type="hidden" name="title" defaultValue={editingItem?.title || editingItem?.name || editingItem} />
                       {activeTab === 'academy' && activeSubTab === 'modules' && (
                         <div className="mt-4 space-y-2">
                           <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Ordem de Exibição</label>
-                          <input type="number" name="order" defaultValue={editingItem?.order} placeholder="Ex: 1" className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
+                          <input type="number" name="order" defaultValue={editingItem?.order_index} placeholder="Ex: 1" className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
+                        </div>
+                      )}
+                      {activeTab === 'prompts' && activeSubTab === 'categories' && (
+                        <div className="mt-4 space-y-2">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Imagem de Capa (URL)</label>
+                          <input name="imageUrl" defaultValue={editingItem?.image_url} placeholder="https://..." className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
+                        </div>
+                      )}
+                      {activeTab === 'tools' && activeSubTab === 'categories' && (
+                        <div className="mt-4 space-y-2">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Imagem da Categoria (URL)</label>
+                          <input name="imageUrl" defaultValue={editingItem?.image_url} placeholder="https://..." className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
                         </div>
                       )}
                     </div>
@@ -783,103 +971,123 @@ export default function AdminDashboard() {
                       {/* Prompt Specific */}
                       {activeTab === 'prompts' && (
                         <>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Categoria</label>
-                            <select name="category" defaultValue={editingItem?.category} className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors">
-                              <option value="Realista">Realista</option>
-                              <option value="Anime">Anime</option>
-                              <option value="Cyberpunk">Cyberpunk</option>
-                              <option value="UNCUT SECTION">UNCUT SECTION</option>
-                              <option value="Marketing">Marketing</option>
-                            </select>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Dificuldade</label>
-                            <select name="difficulty" defaultValue={editingItem?.difficulty} className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors">
-                              <option value="Fácil">Fácil</option>
-                              <option value="Médio">Médio</option>
-                              <option value="Difícil">Difícil</option>
-                            </select>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Preview (URL)</label>
-                            <input name="previewImage" defaultValue={editingItem?.previewImage} className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
-                          </div>
-                          <div className="md:col-span-2 space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Engenharia do Prompt</label>
-                            <textarea name="content" defaultValue={editingItem?.content} required rows={4} className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors resize-none" />
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <input type="checkbox" name="isNSFW" defaultChecked={editingItem?.isNSFW} className="w-5 h-5 rounded bg-zinc-800 border-zinc-700 text-hot-orange focus:ring-hot-orange" />
-                            <label className="text-sm font-bold text-zinc-300">Marcar como 'UNCUT' (+18)</label>
-                          </div>
+                          {activeSubTab === 'categories' ? (
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Imagem da Categoria (URL)</label>
+                              <input name="imageUrl" defaultValue={editingItem?.image_url} placeholder="https://..." className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
+                            </div>
+                          ) : (
+                            <>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Categoria</label>
+                                <select name="category" defaultValue={editingItem?.category} className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors">
+                                  {visualCategories.map(cat => (
+                                    <option key={cat.id} value={cat.name}>{cat.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Dificuldade</label>
+                                <select name="difficulty" defaultValue={editingItem?.difficulty} className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors">
+                                  <option value="Fácil">Fácil</option>
+                                  <option value="Médio">Médio</option>
+                                  <option value="Difícil">Difícil</option>
+                                </select>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Preview (URL)</label>
+                                <input name="previewImage" defaultValue={editingItem?.preview_image} className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
+                              </div>
+                              <div className="md:col-span-2 space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Engenharia do Prompt</label>
+                                <textarea name="content" defaultValue={editingItem?.content} required rows={4} className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors resize-none" />
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <input type="checkbox" name="isNSFW" defaultChecked={editingItem?.is_nsfw} className="w-5 h-5 rounded bg-zinc-800 border-zinc-700 text-hot-orange focus:ring-hot-orange" />
+                                <label className="text-sm font-bold text-zinc-300">Marcar como 'UNCUT' (+18)</label>
+                              </div>
+                            </>
+                          )}
                         </>
                       )}
 
                       {/* Academy Specific */}
                       {activeTab === 'academy' && (
                         <>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Módulo</label>
-                            <select name="moduleId" defaultValue={editingItem?.moduleId} className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors">
-                              {academyModules.map((m: any) => <option key={m.id} value={m.id}>{m.title}</option>)}
-                            </select>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">URL do Vídeo (YouTube)</label>
-                            <div className="relative">
-                              <Youtube className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                              <input name="videoUrl" defaultValue={editingItem?.videoUrl} placeholder="https://youtube.com/..." className="w-full px-4 py-3 pl-10 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
+                          {activeSubTab === 'modules' ? (
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Ordem de Exibição</label>
+                              <input name="order" type="number" defaultValue={editingItem?.order_index} className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
                             </div>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Thumbnail (URL)</label>
-                            <div className="relative">
-                              <ImageIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                              <input name="imageUrl" defaultValue={editingItem?.imageUrl} className="w-full px-4 py-3 pl-10 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
-                            </div>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Arquivo (PDF/Word URL)</label>
-                            <div className="relative">
-                              <FileText className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                              <input name="fileUrl" defaultValue={editingItem?.fileUrl} className="w-full px-4 py-3 pl-10 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
-                            </div>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Nome do Arquivo</label>
-                            <input name="fileName" defaultValue={editingItem?.fileName} placeholder="Ex: Guia_Pratico.pdf" className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
-                          </div>
+                          ) : (
+                            <>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Módulo</label>
+                                <select name="module_id" defaultValue={editingItem?.module_id} className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors">
+                                  {academyModules.map((m: any) => <option key={m.id} value={m.id}>{m.title}</option>)}
+                                </select>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">URL do Vídeo (YouTube)</label>
+                                <div className="relative">
+                                  <Youtube className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                                  <input name="videoUrl" defaultValue={editingItem?.video_url} placeholder="https://youtube.com/..." className="w-full px-4 py-3 pl-10 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Thumbnail (URL)</label>
+                                <div className="relative">
+                                  <ImageIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                                  <input name="imageUrl" defaultValue={editingItem?.image_url} className="w-full px-4 py-3 pl-10 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Arquivo (PDF/Word URL)</label>
+                                <div className="relative">
+                                  <FileText className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                                  <input name="fileUrl" defaultValue={editingItem?.file_url} className="w-full px-4 py-3 pl-10 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Nome do Arquivo</label>
+                                <input name="fileName" defaultValue={editingItem?.file_name} placeholder="Ex: Guia_Pratico.pdf" className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
+                              </div>
+                            </>
+                          )}
                         </>
                       )}
 
                       {/* Tools Specific */}
                       {activeTab === 'tools' && (
                         <>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Link de Acesso</label>
-                            <div className="relative">
-                              <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                              <input name="url" defaultValue={editingItem?.url || editingItem?.link} required placeholder="https://..." className="w-full px-4 py-3 pl-10 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
-                            </div>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Categoria</label>
-                            <select name="category" defaultValue={editingItem?.category} className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors">
-                              {toolCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                            </select>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Ícone / Imagem (URL)</label>
-                            <div className="relative">
-                              <ImageIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                              <input name="imageUrl" defaultValue={editingItem?.imageUrl || editingItem?.image} className="w-full px-4 py-3 pl-10 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <input type="checkbox" name="isHot" defaultChecked={editingItem?.isHot} className="w-5 h-5 rounded bg-zinc-800 border-zinc-700 text-hot-orange focus:ring-hot-orange" />
-                            <label className="text-sm font-bold text-zinc-300">Marcar como "UNCUT"</label>
-                          </div>
+                          {activeSubTab === 'items' && (
+                            <>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Link de Acesso</label>
+                                <div className="relative">
+                                  <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                                  <input name="url" defaultValue={editingItem?.link} required placeholder="https://..." className="w-full px-4 py-3 pl-10 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Categoria</label>
+                                <select name="category" defaultValue={editingItem?.category} className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors">
+                                  {toolCategories.map(cat => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
+                                </select>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Ícone / Imagem (URL)</label>
+                                <div className="relative">
+                                  <ImageIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                                  <input name="imageUrl" defaultValue={editingItem?.image_url} className="w-full px-4 py-3 pl-10 rounded-xl bg-black/40 border border-white/5 focus:border-hot-orange focus:outline-none transition-colors" />
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <input type="checkbox" name="isHot" defaultChecked={editingItem?.is_hot} className="w-5 h-5 rounded bg-zinc-800 border-zinc-700 text-hot-orange focus:ring-hot-orange" />
+                                <label className="text-sm font-bold text-zinc-300">Marcar como "UNCUT"</label>
+                              </div>
+                            </>
+                          )}
                         </>
                       )}
 

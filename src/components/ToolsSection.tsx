@@ -31,12 +31,27 @@ export default function ToolsSection({ isAdmin = false }: ToolsSectionProps) {
   const [editingTool, setEditingTool] = React.useState<any>(null);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = React.useState(false);
   const [newCategoryName, setNewCategoryName] = React.useState('');
+  const [newCategoryImage, setNewCategoryImage] = React.useState('');
 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = React.useState(false);
   const [toolToDelete, setToolToDelete] = React.useState<any>(null);
 
-  const fetchData = async () => {
-    setIsLoading(true);
+  const isLoadingRef = React.useRef(false);
+
+  const fetchData = async (silent = false) => {
+    if (isLoadingRef.current) return;
+    isLoadingRef.current = true;
+    if (!silent) setIsLoading(true);
+    
+    // Safety timeout to prevent infinite loading
+    const timeoutId = setTimeout(() => {
+      if (!silent) {
+        setIsLoading(false);
+        isLoadingRef.current = false;
+        console.warn('Tools fetch timed out');
+      }
+    }, 10000);
+
     try {
       const { data: toolsData, error: toolsError } = await supabase
         .from('tools')
@@ -52,17 +67,31 @@ export default function ToolsSection({ isAdmin = false }: ToolsSectionProps) {
 
       if (categoriesError) throw categoriesError;
 
-      setTools(toolsData);
-      setCategories(categoriesData);
+      setTools(toolsData || []);
+      setCategories(categoriesData || []);
     } catch (error) {
       console.error('Error fetching tools data:', error);
     } finally {
-      setIsLoading(false);
+      clearTimeout(timeoutId);
+      isLoadingRef.current = false;
+      if (!silent) setIsLoading(false);
     }
   };
 
+  const isLoadingRef = React.useRef(false);
+
   React.useEffect(() => {
     fetchData();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && !isLoadingRef.current) {
+        console.log('[Tools] Refetching on visibility change...');
+        fetchData(true);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
   const handleSaveTool = async (e: React.FormEvent) => {
@@ -79,6 +108,13 @@ export default function ToolsSection({ isAdmin = false }: ToolsSectionProps) {
     };
 
     try {
+      // Check authentication
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        alert('Sessão do Supabase não encontrada. Por favor, faça login novamente com um email real para gerenciar ferramentas.');
+        return;
+      }
+
       if (editingTool) {
         const { error } = await supabase
           .from('tools')
@@ -92,12 +128,12 @@ export default function ToolsSection({ isAdmin = false }: ToolsSectionProps) {
         if (error) throw error;
       }
 
-      await fetchData();
+      await fetchData(true);
       setIsAddModalOpen(false);
       setEditingTool(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving tool:', error);
-      alert('Erro ao salvar ferramenta. Verifique o console.');
+      alert(`Erro ao salvar ferramenta: ${error.message || 'Erro desconhecido'}`);
     }
   };
 
@@ -111,38 +147,63 @@ export default function ToolsSection({ isAdmin = false }: ToolsSectionProps) {
   const confirmDelete = async () => {
     if (toolToDelete) {
       try {
+        // Check authentication
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          alert('Sessão do Supabase não encontrada. Por favor, faça login novamente com um email real para excluir ferramentas.');
+          return;
+        }
+
         const { error } = await supabase
           .from('tools')
           .delete()
           .eq('id', toolToDelete.id);
         if (error) throw error;
 
-        await fetchData();
+        await fetchData(true);
         setIsDeleteModalOpen(false);
         setToolToDelete(null);
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error deleting tool:', error);
-        alert('Erro ao excluir ferramenta.');
+        alert(`Erro ao excluir ferramenta: ${error.message || 'Erro desconhecido'}`);
       }
     }
   };
 
   const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newCategoryName && !categories.some(c => c.name === newCategoryName)) {
-      try {
-        const { error } = await supabase
-          .from('tool_categories')
-          .insert([{ name: newCategoryName }]);
-        if (error) throw error;
+    if (!newCategoryName.trim()) {
+      alert('Por favor, digite o nome da categoria.');
+      return;
+    }
 
-        await fetchData();
-        setNewCategoryName('');
-        setIsCategoryModalOpen(false);
-      } catch (error) {
-        console.error('Error adding category:', error);
-        alert('Erro ao adicionar categoria.');
+    if (categories.some(c => c.name.toLowerCase() === newCategoryName.trim().toLowerCase())) {
+      alert('Esta categoria já existe.');
+      return;
+    }
+
+    try {
+      // Check authentication
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        alert('Sessão do Supabase não encontrada. Por favor, faça login novamente com um email real para gerenciar categorias.');
+        return;
       }
+
+      const { error } = await supabase
+        .from('tool_categories')
+        .insert([{ 
+          name: newCategoryName.trim(),
+          image_url: newCategoryImage.trim() || null
+        }]);
+      if (error) throw error;
+
+      await fetchData(true);
+      setNewCategoryName('');
+      setNewCategoryImage('');
+    } catch (error: any) {
+      console.error('Error adding category:', error);
+      alert(`Erro ao adicionar categoria: ${error.message || 'Erro desconhecido'}`);
     }
   };
 
@@ -155,7 +216,7 @@ export default function ToolsSection({ isAdmin = false }: ToolsSectionProps) {
         .eq('id', cat.id);
       if (error) throw error;
 
-      await fetchData();
+      await fetchData(true);
     } catch (error) {
       console.error('Error deleting category:', error);
       alert('Erro ao excluir categoria. Verifique se existem ferramentas vinculadas.');
@@ -164,9 +225,20 @@ export default function ToolsSection({ isAdmin = false }: ToolsSectionProps) {
 
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <Loader2 className="w-12 h-12 text-hot-orange animate-spin" />
-        <p className="text-zinc-500 font-medium">Carregando ferramentas...</p>
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-6">
+        <div className="relative">
+          <Loader2 className="w-12 h-12 text-hot-orange animate-spin" />
+          <div className="absolute inset-0 blur-xl bg-hot-orange/20 animate-pulse" />
+        </div>
+        <div className="text-center space-y-2">
+          <p className="text-zinc-400 font-medium">Carregando ferramentas...</p>
+          <button 
+            onClick={() => fetchData()}
+            className="text-xs text-hot-orange hover:underline font-bold uppercase tracking-widest"
+          >
+            Tentar novamente
+          </button>
+        </div>
       </div>
     );
   }
@@ -175,8 +247,13 @@ export default function ToolsSection({ isAdmin = false }: ToolsSectionProps) {
     <div className="space-y-12">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <h2 className="text-4xl font-display font-black tracking-tight">Kit de <span className="hot-text-gradient">Ferramentas</span></h2>
-          <p className="text-zinc-500 mt-1">As melhores ferramentas selecionadas para escalar sua presença digital.</p>
+          <h2 className="text-4xl font-display font-black tracking-tight flex flex-wrap items-center gap-3">
+            Kit de 
+            <span className="px-4 py-1 rounded-xl bg-hot-red/10 border border-hot-red/20 text-hot-red">
+              Ferramentas
+            </span>
+          </h2>
+          <p className="text-zinc-500 mt-2">As melhores ferramentas selecionadas para escalar sua presença digital.</p>
         </div>
         
         {isAdmin && (
@@ -207,7 +284,10 @@ export default function ToolsSection({ isAdmin = false }: ToolsSectionProps) {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.05 }}
-            onClick={() => window.open(tool.link, '_blank')}
+            onClick={() => {
+              const win = window.open(tool.link, '_blank', 'noopener,noreferrer');
+              if (win) win.focus();
+            }}
             className={`bg-[#141414] border rounded-[2rem] p-6 flex flex-col gap-6 group transition-all relative cursor-pointer ${
               tool.is_hot ? 'border-hot-red/30 glow-red hover:border-hot-red' : 'border-[#1F1F1F] hover:border-hot-orange/50 hover:shadow-2xl hover:shadow-hot-orange/5'
             }`}
@@ -350,41 +430,65 @@ export default function ToolsSection({ isAdmin = false }: ToolsSectionProps) {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsCategoryModalOpen(false)}
-              className="absolute inset-0 bg-black/90 backdrop-blur-md"
+              className="absolute inset-0 bg-black/95 backdrop-blur-md"
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-md bg-[#141414] p-8 rounded-[2.5rem] border border-[#1F1F1F] shadow-2xl"
+              className="relative z-10 w-full max-w-md bg-[#0D0D0D] p-10 rounded-[3rem] border border-white/5 shadow-2xl"
             >
-              <div className="flex items-center justify-between mb-8">
-                <h3 className="text-2xl font-display font-black">Gerenciar Categorias</h3>
-                <button onClick={() => setIsCategoryModalOpen(false)} className="p-2 rounded-xl hover:bg-white/5">
-                  <X className="w-6 h-6 text-zinc-500" />
+              <div className="flex items-center justify-between mb-10">
+                <h3 className="text-3xl font-display font-black tracking-tight">Gerenciar Categorias</h3>
+                <button onClick={() => setIsCategoryModalOpen(false)} className="p-2 rounded-2xl hover:bg-white/5 transition-colors">
+                  <X className="w-6 h-6 text-zinc-600" />
                 </button>
               </div>
 
-              <div className="space-y-6">
-                <form onSubmit={handleAddCategory} className="flex gap-2">
-                  <input 
-                    value={newCategoryName}
-                    onChange={(e) => setNewCategoryName(e.target.value)}
-                    placeholder="Nova categoria..."
-                    className="flex-grow px-4 py-3 rounded-xl bg-[#1F1F1F] border border-[#2F2F2F] focus:border-hot-orange focus:outline-none transition-colors"
-                  />
-                  <button type="submit" className="p-3 rounded-xl hot-gradient text-white">
-                    <Plus className="w-6 h-6" />
+              <div className="space-y-8">
+                <form onSubmit={handleAddCategory} className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase tracking-widest text-zinc-500 ml-1">Nome da Categoria</label>
+                    <input 
+                      value={newCategoryName}
+                      onChange={(e) => setNewCategoryName(e.target.value)}
+                      placeholder="Ex: Realismo"
+                      autoFocus
+                      className="w-full px-6 py-4 rounded-2xl bg-[#1A1A1A] border border-white/5 focus:border-hot-red focus:outline-none transition-all text-white placeholder:text-zinc-700"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase tracking-widest text-zinc-500 ml-1">URL da Imagem</label>
+                    <input 
+                      value={newCategoryImage}
+                      onChange={(e) => setNewCategoryImage(e.target.value)}
+                      placeholder="https://..."
+                      className="w-full px-6 py-4 rounded-2xl bg-[#1A1A1A] border border-white/5 focus:border-hot-red focus:outline-none transition-all text-white placeholder:text-zinc-700"
+                    />
+                  </div>
+                  <button type="submit" className="w-full py-4 rounded-2xl bg-hot-red text-white font-bold shadow-lg shadow-hot-red/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2">
+                    <Plus className="w-5 h-5" />
+                    Adicionar Categoria
                   </button>
                 </form>
 
-                <div className="space-y-2">
+                <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                   {categories.map(cat => (
-                    <div key={cat.id} className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
-                      <span className="font-bold text-sm">{cat.name}</span>
+                    <div key={cat.id} className="flex items-center justify-between p-4 rounded-2xl bg-white/[0.02] border border-white/5 group hover:bg-white/[0.04] transition-all">
+                      <div className="flex items-center gap-4">
+                        {cat.image_url && (
+                          <img 
+                            src={cat.image_url} 
+                            alt={cat.name} 
+                            className="w-10 h-10 rounded-xl object-cover border border-white/10"
+                            referrerPolicy="no-referrer"
+                          />
+                        )}
+                        <span className="font-bold text-zinc-300 group-hover:text-white transition-colors">{cat.name}</span>
+                      </div>
                       <button 
                         onClick={() => handleDeleteCategory(cat)}
-                        className="text-zinc-500 hover:text-rose-400 transition-colors"
+                        className="p-2 rounded-xl text-zinc-600 hover:text-rose-500 hover:bg-rose-500/10 transition-all"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>

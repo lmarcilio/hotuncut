@@ -24,8 +24,16 @@ interface SocialMediaSectionProps {
 }
 
 export default function SocialMediaSection({ isAdmin = false }: SocialMediaSectionProps) {
-  const [modules, setModules] = React.useState<any[]>([]);
-  const [isLoading, setIsLoading] = React.useState(true);
+  const [modules, setModules] = React.useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('hotmedia_academy_cache');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [isLoading, setIsLoading] = React.useState(modules.length === 0);
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [viewedLessons, setViewedLessons] = React.useState<string[]>(() => {
     const saved = localStorage.getItem('hotmedia_viewed_lessons');
     return saved ? JSON.parse(saved) : [];
@@ -43,8 +51,18 @@ export default function SocialMediaSection({ isAdmin = false }: SocialMediaSecti
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const fetchData = async () => {
-    setIsLoading(true);
+  const fetchData = async (silent = false) => {
+    if (!silent) setIsLoading(true);
+    else setIsRefreshing(true);
+    
+    // Safety timeout
+    const timeoutId = setTimeout(() => {
+      if (!silent) {
+        setIsLoading(false);
+        console.warn('Academy fetch timed out');
+      }
+    }, 10000);
+
     try {
       const { data: modulesData, error: modulesError } = await supabase
         .from('academy_modules')
@@ -66,16 +84,29 @@ export default function SocialMediaSection({ isAdmin = false }: SocialMediaSecti
       }));
 
       setModules(modulesWithLessons);
+      localStorage.setItem('hotmedia_academy_cache', JSON.stringify(modulesWithLessons));
     } catch (error) {
       console.error('Error fetching academy data:', error);
     } finally {
-      setIsLoading(false);
+      clearTimeout(timeoutId);
+      if (!silent) setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
   React.useEffect(() => {
     fetchData();
-  }, []);
+
+    const handleFocus = () => {
+      if (modules.length === 0 && !isLoading) {
+        console.log('[Academy] Refetching on focus...');
+        fetchData(true);
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [modules.length, isLoading]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -104,7 +135,7 @@ export default function SocialMediaSection({ isAdmin = false }: SocialMediaSecti
   const handleSaveLesson = async (e: React.FormEvent) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget as HTMLFormElement);
-    const moduleId = formData.get('moduleId') as string;
+    const moduleId = formData.get('module_id') as string;
     
     const lessonData = {
       title: formData.get('title') as string,
@@ -131,7 +162,7 @@ export default function SocialMediaSection({ isAdmin = false }: SocialMediaSecti
         if (error) throw error;
       }
       
-      await fetchData();
+      await fetchData(true);
       setIsAddModalOpen(false);
       setEditingLesson(null);
     } catch (error) {
@@ -166,7 +197,7 @@ export default function SocialMediaSection({ isAdmin = false }: SocialMediaSecti
         if (error) throw error;
       }
 
-      await fetchData();
+      await fetchData(true);
       setIsModuleModalOpen(false);
       setEditingModule(null);
     } catch (error) {
@@ -199,7 +230,7 @@ export default function SocialMediaSection({ isAdmin = false }: SocialMediaSecti
         if (error) throw error;
       }
 
-      await fetchData();
+      await fetchData(true);
       setIsDeleteConfirmOpen(false);
       setItemToDelete(null);
     } catch (error) {
@@ -223,9 +254,20 @@ export default function SocialMediaSection({ isAdmin = false }: SocialMediaSecti
 
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <Loader2 className="w-12 h-12 text-hot-orange animate-spin" />
-        <p className="text-zinc-500 font-medium">Carregando academia...</p>
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-6">
+        <div className="relative">
+          <Loader2 className="w-12 h-12 text-hot-orange animate-spin" />
+          <div className="absolute inset-0 blur-xl bg-hot-orange/20 animate-pulse" />
+        </div>
+        <div className="text-center space-y-2">
+          <p className="text-zinc-500 font-medium">Carregando academia...</p>
+          <button 
+            onClick={() => fetchData()}
+            className="text-xs text-hot-orange hover:underline font-bold uppercase tracking-widest"
+          >
+            Tentar novamente
+          </button>
+        </div>
       </div>
     );
   }
@@ -234,7 +276,19 @@ export default function SocialMediaSection({ isAdmin = false }: SocialMediaSecti
     <div className="space-y-12">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <h2 className="text-4xl font-display font-black tracking-tight">Academia de <span className="hot-text-gradient">Criadores</span></h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-4xl font-display font-black tracking-tight">Academia de <span className="hot-text-gradient">Criadores</span></h2>
+            {isRefreshing && (
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="flex items-center gap-2 px-3 py-1 rounded-full bg-hot-orange/10 border border-hot-orange/20 text-hot-orange text-[10px] font-black uppercase tracking-widest"
+              >
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Atualizando...
+              </motion.div>
+            )}
+          </div>
           <p className="text-zinc-500 mt-1">Domine a arte da atenção e do crescimento com conteúdos exclusivos.</p>
         </div>
         
@@ -342,7 +396,7 @@ export default function SocialMediaSection({ isAdmin = false }: SocialMediaSecti
                 >
                   <div className="relative aspect-video overflow-hidden">
                     <img 
-                      src={lesson.image_url || `https://picsum.photos/seed/${lesson.id}/800/450`} 
+                      src={lesson.image_url || undefined || `https://picsum.photos/seed/${lesson.id}/800/450`} 
                       alt={lesson.title}
                       className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                       referrerPolicy="no-referrer"
@@ -573,7 +627,7 @@ export default function SocialMediaSection({ isAdmin = false }: SocialMediaSecti
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-zinc-500 ml-1">Módulo</label>
-                  <select name="moduleId" defaultValue={editingLesson?.moduleId || modules[0]?.id} className="w-full px-4 py-3 rounded-xl bg-[#1F1F1F] border border-[#2F2F2F] focus:border-hot-orange focus:outline-none transition-colors">
+                  <select name="module_id" defaultValue={editingLesson?.module_id || modules[0]?.id} className="w-full px-4 py-3 rounded-xl bg-[#1F1F1F] border border-[#2F2F2F] focus:border-hot-orange focus:outline-none transition-colors">
                     {modules.map((m: any) => <option key={m.id} value={m.id}>{m.title}</option>)}
                   </select>
                 </div>

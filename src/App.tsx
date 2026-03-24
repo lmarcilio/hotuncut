@@ -11,9 +11,10 @@ import {
   Menu,
   X,
   Flame,
+  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { supabase } from './lib/supabase';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
 
 import Dashboard from './components/Dashboard';
 import PromptsSection from './components/PromptsSection';
@@ -25,6 +26,7 @@ import ProfileSection from './components/ProfileSection';
 import AuthPage from './components/AuthPage';
 import PlanSelection from './components/PlanSelection';
 import FooterAdmin from './components/FooterAdmin';
+
 import Logo from './components/Logo';
 
 type Section = 'dashboard' | 'prompts' | 'academy' | 'tools' | 'admin' | 'profile';
@@ -38,36 +40,94 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
   const [userProfile, setUserProfile] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
-  const [isStuck, setIsStuck] = React.useState(false);
-  const [configError, setConfigError] = React.useState(false);
+  const [showForceAccess, setShowForceAccess] = React.useState(false);
+  const [viewingLanding, setViewingLanding] = React.useState(true);
+  const [selectedPlanId, setSelectedPlanId] = React.useState<string | null>(null);
+  const [fetchError, setFetchError] = React.useState<string | null>(null);
+  const fetchRetryCount = React.useRef(0);
 
-  // BUG FIX: dependency array was [isLoggedIn, userProfile, loading] causing
-  // infinite re-renders. Changed to [] so it only runs once on mount.
+  // Controle do botão de "Forçar Acesso" e Watchdog
   React.useEffect(() => {
-    if (!supabase.auth) {
-      setConfigError(true);
-      setLoading(false);
-      return;
+    if (loading && isLoggedIn) {
+      const timer = setTimeout(() => {
+        setShowForceAccess(true);
+      }, 3000);
+
+      // Watchdog de 15 segundos para garantir que o usuário nunca fique travado
+      const watchdog = setTimeout(async () => {
+        if (loading && !userProfile) {
+          console.warn('Watchdog: Perfil demorou demais. Forçando acesso básico.');
+          const { data: { user } } = await supabase.auth.getUser();
+          setLoading(false);
+          setUserProfile({
+            id: user?.id || 'temp',
+            email: user?.email || '',
+            name: user?.email?.split('@')[0] || 'Usuário (Modo de Segurança)',
+            plan_status: 'none'
+          });
+        }
+      }, 15000);
+
+      return () => {
+        clearTimeout(timer);
+        clearTimeout(watchdog);
+      };
+    } else {
+      setShowForceAccess(false);
     }
+  }, [loading, isLoggedIn, userProfile]);
 
-    const timer = setTimeout(() => {
-      setIsStuck(true);
-    }, 10000);
+  React.useEffect(() => {
+    const handleFocus = () => {
+      console.log('[App] Janela focada, verificando integridade da sessão...');
+      // Tentar obter a sessão atual pode forçar o cliente Supabase a se reconectar
+      // se a conexão tiver caído enquanto a aba estava em segundo plano.
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session && !isLoggedIn) {
+          console.log('[App] Sessão recuperada após foco');
+          setIsLoggedIn(true);
+        }
+      }).catch(err => {
+        console.error('[App] Erro ao verificar sessão no foco:', err);
+      });
+    };
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        setIsLoggedIn(true);
-        fetchProfile(session.user.id);
-      } else {
+    window.addEventListener('focus', handleFocus);
+
+    const initAuth = async () => {
+      try {
+        console.log('[Auth] Inicializando autenticação...');
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session) {
+          console.log('[Auth] Sessão ativa encontrada no initAuth.');
+          setIsLoggedIn(true);
+          setViewingLanding(false);
+          // fetchProfile será chamado pelo onAuthStateChange (INITIAL_SESSION)
+        } else {
+          console.log('[Auth] Nenhuma sessão ativa no initAuth.');
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('[Auth] Erro ao inicializar auth:', err);
         setLoading(false);
       }
-    });
+    };
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    initAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('[Auth] Mudança no estado de auth:', event);
+      
       if (session) {
         setIsLoggedIn(true);
-        fetchProfile(session.user.id);
+        setViewingLanding(false);
+        // Só busca o perfil se não for um evento redundante ou se o perfil ainda não existir
+        if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'USER_UPDATED') {
+          await fetchProfile(session.user.id, session.user.email);
+        }
       } else {
+        console.log('[Auth] Sessão encerrada ou inexistente.');
         setIsLoggedIn(false);
         setIsAdmin(false);
         setUserProfile(null);
@@ -77,72 +137,249 @@ export default function App() {
 
     return () => {
       subscription.unsubscribe();
-      clearTimeout(timer);
+      window.removeEventListener('focus', handleFocus);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fetchProfile = async (userId: string, retryCount = 0) => {
+  const isFetchingProfile = React.useRef(false);
+
+  const fetchProfile = async (userId: string, email?: string) => {
+    if (isFetchingProfile.current) {
+      console.log('fetchProfile já está em execução, ignorando...');
+      return;
+    }
+    isFetchingProfile.current = true;
+    setLoading(true);
+    setFetchError(null);
+
     try {
-      const { data, error } = await supabase
+      console.log(`[fetchProfile] Iniciando busca para: ${userId} | Email: ${email} | Tentativa: ${fetchRetryCount.current + 1}`);
+      
+      // Tenta garantir que a sessão está fresca se for uma tentativa de repetição
+      if (fetchRetryCount.current > 0) {
+        console.log('[fetchProfile] Tentando atualizar sessão antes de buscar perfil...');
+        try {
+          // Timeout curto para o refresh da sessão também
+          const refreshPromise = supabase.auth.refreshSession();
+          const refreshTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT_REFRESH')), 5000));
+          await Promise.race([refreshPromise, refreshTimeout]);
+        } catch (refreshErr) {
+          console.warn('[fetchProfile] Falha ou timeout ao atualizar sessão:', refreshErr);
+        }
+      }
+
+      // Timeout de segurança para a query do perfil (aumentado para 30s)
+      const queryTimeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('TIMEOUT_PROFILE_QUERY')), 30000)
+      );
+
+      const profileQuery = supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .single();
 
-      if (error && error.code === 'PGRST116') {
-        if (retryCount < 3) {
-          setTimeout(() => fetchProfile(userId, retryCount + 1), 1000);
+      console.log('[fetchProfile] Aguardando resposta do banco (timeout: 30s)...');
+      const { data, error } = await Promise.race([profileQuery, queryTimeout]) as any;
+
+      if (data) {
+        console.log('[fetchProfile] Perfil carregado com sucesso:', data.name);
+        setUserProfile(data);
+        // Removida a promoção automática para isAdmin. 
+        // O acesso ao painel admin deve ser explícito via login de admin.
+        fetchRetryCount.current = 0;
+      } else if (error) {
+        console.error('[fetchProfile] Erro ao carregar perfil:', error.message, error.code);
+        
+        // Fallback para manter dados básicos se o perfil falhar mas o email for mestre
+        const isMasterAdmin = email === 'admin@admin.com' || email === 'lucasmarcilo7@gmail.com';
+        if (isMasterAdmin) {
+          console.log('[fetchProfile] Fallback: Usuário mestre detectado, mantendo perfil básico.');
+          setUserProfile({
+            id: userId,
+            email: email || '',
+            name: 'Administrador',
+            plan_status: 'admin'
+          });
           return;
-        } else {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user) {
-            const { data: newProfile, error: createError } = await supabase
-              .from('profiles')
-              .upsert({
-                id: user.id,
-                email: user.email,
-                name: user.user_metadata?.full_name || user.email?.split('@')[0],
-                plan_status: user.email === 'lucasmarcilo7@gmail.com' ? 'admin' : 'none',
-                avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.id}`
-              })
-              .select()
-              .single();
+        }
+
+        setFetchError(error.message);
+        
+        if (error.message.includes('infinite recursion')) {
+          console.error('[fetchProfile] ERRO CRÍTICO: Recursão infinita detectada nas regras do Supabase (RLS).');
+          localStorage.setItem('rls_recursion_detected', 'true');
+        } else if (error.code === 'PGRST116' || error.message.includes('no rows')) {
+          // Perfil não existe, vamos tentar criar um básico
+          console.log('[fetchProfile] Perfil não encontrado, criando perfil básico...');
+          const { data: newProfile, error: createError } = await supabase
+            .from('profiles')
+            .insert([
+              { 
+                id: userId, 
+                email: email, 
+                name: email?.split('@')[0] || 'Usuário',
+                plan_status: 'none'
+              }
+            ])
+            .select()
+            .single();
+
+          if (newProfile) {
+            console.log('[fetchProfile] Perfil básico criado com sucesso.');
+            setUserProfile(newProfile);
+            fetchRetryCount.current = 0;
+          } else {
+            console.error('[fetchProfile] Falha ao criar perfil básico:', createError?.message);
+            setFetchError(`Erro ao criar perfil: ${createError?.message}`);
             
-            if (newProfile) {
-              setUserProfile(newProfile);
-              setIsAdmin(newProfile.plan_status === 'admin');
-            } else if (createError) {
-              console.error('Error creating fallback profile:', createError);
+            // Se falhou o insert, pode ser RLS. Tenta novamente uma vez.
+            if (fetchRetryCount.current < 1) {
+              fetchRetryCount.current++;
+              isFetchingProfile.current = false;
+              console.log('[fetchProfile] Agendando nova tentativa de criação de perfil...');
+              setTimeout(() => fetchProfile(userId, email), 1000);
+              return;
             }
+          }
+        } else {
+          // Outro erro (ex: timeout, rede). Tenta novamente até 2 vezes.
+          if (fetchRetryCount.current < 2) {
+            fetchRetryCount.current++;
+            console.log(`[fetchProfile] Agendando nova tentativa (${fetchRetryCount.current}) após erro genérico...`);
+            isFetchingProfile.current = false;
+            setTimeout(() => fetchProfile(userId, email), 2000);
+            return;
           }
         }
       }
-
-      if (data) {
-        setUserProfile(data);
-        setIsAdmin(data.plan_status === 'admin');
+    } catch (err: any) {
+      console.error('[fetchProfile] Erro inesperado ou timeout:', err.message || err);
+      
+      // Fallback para manter dados básicos se o erro for inesperado (ex: timeout)
+      const isMasterAdmin = email === 'admin@admin.com' || email === 'lucasmarcilo7@gmail.com';
+      if (isMasterAdmin) {
+        console.log('[fetchProfile] Fallback (Catch): Usuário mestre detectado, mantendo perfil básico.');
+        setUserProfile({
+          id: userId,
+          email: email || '',
+          name: 'Administrador',
+          plan_status: 'admin'
+        });
+        return;
       }
-    } catch (err) {
-      console.error('Error fetching profile:', err);
+
+      // Tenta novamente se for um erro inesperado (como o timeout que definimos)
+      if (fetchRetryCount.current < 2) {
+        fetchRetryCount.current++;
+        console.log(`[fetchProfile] Agendando nova tentativa (${fetchRetryCount.current}) após erro inesperado: ${err.message}`);
+        isFetchingProfile.current = false;
+        setTimeout(() => fetchProfile(userId, email), 2000);
+        return;
+      }
+
+      const errorMessage = err.message === 'TIMEOUT_PROFILE_QUERY' 
+        ? 'O banco de dados demorou muito para responder (Tempo Limite de 30s). Verifique sua conexão ou tente novamente.'
+        : (err.message || 'Erro inesperado');
+      
+      setFetchError(errorMessage);
     } finally {
+      console.log('[fetchProfile] Finalizado.');
       setLoading(false);
+      isFetchingProfile.current = false;
     }
   };
 
-  const handleGetStarted = (mode: 'login' | 'signup') => {
-    setAuthMode(mode);
-    setShowAuth(true);
-  };
+  const [isSlowLoading, setIsSlowLoading] = React.useState(false);
+
+  // Timeout de segurança para o carregamento (aumentado para 15s)
+  React.useEffect(() => {
+    if (loading && isLoggedIn) {
+      setIsSlowLoading(false);
+      const slowTimer = setTimeout(() => setIsSlowLoading(true), 5000);
+      
+      const timer = setTimeout(() => {
+        if (loading) {
+          console.warn('O carregamento do perfil excedeu o tempo limite de 15s.');
+          setLoading(false);
+          if (!userProfile) {
+            setFetchError('Tempo limite de carregamento excedido (15s). Verifique sua conexão.');
+          }
+        }
+      }, 15000);
+      
+      return () => {
+        clearTimeout(slowTimer);
+        clearTimeout(timer);
+      };
+    }
+  }, [loading, isLoggedIn, userProfile]);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setIsLoggedIn(false);
-    setIsAdmin(false);
-    setUserProfile(null);
-    setActiveSection('dashboard');
+    try {
+      console.log('[Auth] Iniciando logout...');
+      await supabase.auth.signOut();
+      localStorage.removeItem('hotmedia_current_user');
+      localStorage.removeItem('rls_recursion_detected');
+      setIsLoggedIn(false);
+      setIsAdmin(false);
+      setActiveSection('dashboard');
+      setUserProfile(null);
+      setViewingLanding(true);
+      console.log('[Auth] Logout concluído. Redirecionando...');
+      // Força um recarregamento para limpar qualquer estado residual
+      window.location.href = '/';
+    } catch (error) {
+      console.error('[Auth] Erro ao sair:', error);
+      localStorage.clear();
+      window.location.href = '/';
+    }
   };
 
+  const handleGetStarted = (mode: 'login' | 'signup', planId?: string) => {
+    setSelectedPlanId(planId || null);
+    
+    if (isLoggedIn) {
+      // Se já está logado, removemos a landing page para mostrar o conteúdo (Dashboard ou PlanSelection)
+      setViewingLanding(false);
+    } else {
+      setAuthMode(mode);
+      setShowAuth(true);
+    }
+  };
+
+  const handleTestLogin = () => {
+    const mockProfile = {
+      id: 'test-user-id',
+      email: 'teste@teste.com',
+      name: 'Usuário de Teste',
+      plan_status: 'active',
+      is_lifetime: true,
+      created_at: new Date().toISOString()
+    };
+    setUserProfile(mockProfile);
+    setIsLoggedIn(true);
+    setShowAuth(false);
+    setViewingLanding(false);
+    setLoading(false);
+  };
+
+  // Update profile when custom event fires
+  React.useEffect(() => {
+    const handleStorageChange = () => {
+      const saved = localStorage.getItem('hotmedia_current_user');
+      if (saved) setUserProfile(JSON.parse(saved));
+    };
+    window.addEventListener('storage', handleStorageChange);
+    // Also listen for a custom event since storage event only fires between tabs
+    window.addEventListener('profile-updated', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('profile-updated', handleStorageChange);
+    };
+  }, []);
+
+  // Remove admin from navItems as per user request
   const navItems = [
     { id: 'dashboard', label: 'Painel Principal', icon: LayoutDashboard },
     { id: 'prompts', label: 'Biblioteca de Prompts', icon: Terminal },
@@ -152,58 +389,86 @@ export default function App() {
 
   const renderSection = () => {
     switch (activeSection) {
-      case 'dashboard': return <Dashboard />;
+      case 'dashboard': return <Dashboard onLogout={handleLogout} />;
       case 'prompts': return <PromptsSection isAdmin={isAdmin} />;
       case 'academy': return <SocialMediaSection isAdmin={isAdmin} />;
       case 'tools': return <ToolsSection isAdmin={isAdmin} />;
-      case 'admin': return isAdmin ? <AdminDashboard /> : <Dashboard />;
-      case 'profile': return <ProfileSection />;
-      default: return <Dashboard />;
+      case 'profile': return <ProfileSection userProfile={userProfile} onProfileUpdate={() => fetchProfile(userProfile?.id)} />;
+      default: return <Dashboard onLogout={handleLogout} />;
     }
   };
 
-  if (configError) {
+  if (!isSupabaseConfigured) {
     return (
-      <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center p-6 text-center gap-4">
-        <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center mb-4">
-          <Flame className="w-8 h-8 text-red-500" />
+      <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6 text-center">
+        <div className="max-w-md space-y-4">
+          <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <X className="w-8 h-8 text-red-500" />
+          </div>
+          <h1 className="text-2xl font-bold text-white">Configuração Ausente</h1>
+          <p className="text-zinc-400">
+            As variáveis de ambiente do Supabase não foram encontradas. 
+            Certifique-se de configurar <code className="text-hot-orange">VITE_SUPABASE_URL</code> e <code className="text-hot-orange">VITE_SUPABASE_ANON_KEY</code> no seu painel da Netlify.
+          </p>
         </div>
-        <h2 className="text-2xl font-black">Erro de Configuração</h2>
-        <p className="text-zinc-500 text-sm max-w-xs">
-          As chaves do Supabase (URL ou Anon Key) estão faltando. 
-          Configure as variáveis <code className="text-hot-orange">VITE_SUPABASE_URL</code> e{' '}
-          <code className="text-hot-orange">VITE_SUPABASE_ANON_KEY</code> no arquivo <code>.env.local</code>.
-        </p>
       </div>
     );
   }
 
-  if (loading || (isLoggedIn && !userProfile)) {
+  if (loading) {
     return (
-      <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center gap-4 p-6 text-center">
+      <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center gap-6 p-6 text-center">
         <div className="w-12 h-12 border-4 border-hot-orange border-t-transparent rounded-full animate-spin" />
-        <div className="space-y-2">
-          <p className="text-zinc-500 text-sm animate-pulse">Carregando seu perfil...</p>
-          {isStuck && (
-            <motion.div 
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-4"
+        {showForceAccess && (
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-4"
+          >
+            <p className="text-zinc-500 text-sm max-w-xs mx-auto">
+              O carregamento está demorando mais que o esperado. Isso pode ser devido a uma conexão lenta ou instabilidade temporária.
+            </p>
+            <button 
+              onClick={() => {
+                console.log('Acesso forçado pelo usuário.');
+                setLoading(false);
+              }}
+              className="px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl text-xs font-bold transition-all hover:scale-[1.02] active:scale-[0.98]"
             >
-              <p className="text-xs text-zinc-600 max-w-xs">
-                Parece que o carregamento está demorando mais que o esperado. 
-                Isso pode ser um problema de conexão ou configuração.
-              </p>
-              <button 
-                onClick={handleLogout}
-                className="px-6 py-2 rounded-xl bg-white/5 border border-white/10 text-xs font-bold hover:bg-white/10 transition-all"
-              >
-                Sair e tentar novamente
-              </button>
-            </motion.div>
-          )}
-        </div>
+              FORÇAR ACESSO AO PAINEL
+            </button>
+          </motion.div>
+        )}
       </div>
+    );
+  }
+
+  if (viewingLanding) {
+    return (
+      <>
+        {showAuth && !isLoggedIn ? (
+          <AuthPage 
+            onLogin={() => {
+              setIsLoggedIn(true);
+              setShowAuth(false);
+              setViewingLanding(false);
+            }} 
+            onTestLogin={handleTestLogin}
+            onBack={() => setShowAuth(false)}
+            initialMode={authMode}
+          />
+        ) : (
+          <LandingPage onGetStarted={handleGetStarted} isLoggedIn={isLoggedIn} />
+        )}
+        <FooterAdmin onAdminLogin={(val) => {
+          setIsAdmin(val);
+          if (val) {
+            setIsLoggedIn(true);
+            setActiveSection('admin');
+            setViewingLanding(false);
+          }
+        }} />
+      </>
     );
   }
 
@@ -212,11 +477,17 @@ export default function App() {
       <>
         {showAuth ? (
           <AuthPage 
-            onLogin={() => setIsLoggedIn(true)} 
+            onLogin={() => {
+              console.log('[Auth] Login bem-sucedido, atualizando estado...');
+              setIsLoggedIn(true);
+              setViewingLanding(false);
+            }} 
+            onTestLogin={handleTestLogin}
+            onBack={() => setShowAuth(false)}
             initialMode={authMode}
           />
         ) : (
-          <LandingPage onGetStarted={handleGetStarted} />
+          <LandingPage onGetStarted={handleGetStarted} isLoggedIn={isLoggedIn} />
         )}
         <FooterAdmin onAdminLogin={(val) => {
           setIsAdmin(val);
@@ -229,10 +500,132 @@ export default function App() {
     );
   }
 
-  const isExpired = userProfile?.expires_at && new Date(userProfile.expires_at) < new Date();
+  if (isLoggedIn && !isAdmin) {
+    // Se o perfil ainda não carregou E ainda estamos no estado de loading, mostramos o spinner
+    if (!userProfile && loading) {
+      return (
+        <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center gap-8">
+          <div className="relative">
+            <div className="w-12 h-12 border-4 border-hot-orange border-t-transparent rounded-full animate-spin" />
+            <div className="absolute inset-0 blur-xl bg-hot-orange/20 animate-pulse" />
+          </div>
+          
+          <div className="flex flex-col items-center gap-4">
+            <p className="text-zinc-500 font-medium animate-pulse">Carregando seu perfil...</p>
+            
+            {isSlowLoading && (
+              <p className="text-hot-orange/60 text-[10px] uppercase tracking-widest animate-pulse">
+                Isso está demorando mais do que o esperado...
+              </p>
+            )}
+            
+            {/* Botão de segurança para destravar o fluxo se demorar demais */}
+            <button 
+              onClick={async () => {
+                console.log('Forçando acesso ao painel...');
+                const { data: { user } } = await supabase.auth.getUser();
+                setLoading(false);
+                setUserProfile({
+                  id: user?.id || 'temp',
+                  email: user?.email || '',
+                  name: user?.email?.split('@')[0] || 'Usuário',
+                  plan_status: 'none'
+                });
+              }}
+              className="px-6 py-3 bg-white/5 hover:bg-white/10 text-white/40 hover:text-white rounded-xl text-xs font-bold uppercase tracking-widest transition-all"
+            >
+              Forçar Acesso ao Painel
+            </button>
+          </div>
+        </div>
+      );
+    }
 
-  if (userProfile && (userProfile.plan_status === 'none' || isExpired) && !isAdmin) {
-    return <PlanSelection onPlanSelected={() => fetchProfile(userProfile.id)} />;
+    // Se o loading terminou e NÃO temos perfil, mostramos uma tela de erro amigável com botão de logout
+    if (!userProfile && !loading) {
+      const isRecursionError = localStorage.getItem('rls_recursion_detected') === 'true';
+
+      return (
+        <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center text-red-500 mb-6">
+            <Flame className="w-8 h-8" />
+          </div>
+          <h2 className="text-2xl font-bold text-white mb-2">
+            {isRecursionError ? 'Erro de Permissão no Banco' : 'Ops! Perfil não encontrado'}
+          </h2>
+          <p className="text-zinc-500 max-w-md mb-4">
+            {isRecursionError 
+              ? 'Detectamos um erro de "Recursão Infinita" nas regras do seu Supabase. Isso acontece quando as regras de segurança entram em loop. Por favor, execute o script SQL de correção no seu painel do Supabase.'
+              : 'Houve um problema ao carregar seus dados. Isso pode acontecer se o seu cadastro ainda estiver sendo processado ou se houver um erro de permissão no banco de dados.'}
+          </p>
+          
+          {fetchError && (
+            <div className="mb-8 p-3 bg-red-500/5 border border-red-500/10 rounded-xl">
+              <p className="text-[10px] font-mono text-red-400/60 break-all uppercase tracking-tighter">
+                Detalhes técnicos: {fetchError}
+              </p>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-3 w-full max-w-xs">
+            <button 
+              onClick={() => {
+                localStorage.removeItem('rls_recursion_detected');
+                fetchRetryCount.current = 0;
+                window.location.reload();
+              }}
+              className="px-6 py-4 bg-hot-orange text-white rounded-2xl font-bold hover:scale-[1.02] transition-transform"
+            >
+              Tentar Novamente
+            </button>
+            <button 
+              onClick={handleLogout}
+              className="px-6 py-4 bg-white/5 hover:bg-white/10 text-white rounded-2xl font-medium"
+            >
+              Sair e limpar sessão
+            </button>
+            <button 
+              onClick={() => {
+                if (confirm('Isso irá limpar todas as configurações (incluindo logo personalizada) e deslogar você. Deseja continuar?')) {
+                  localStorage.clear();
+                  sessionStorage.clear();
+                  window.location.href = '/';
+                }
+              }}
+              className="text-[10px] text-zinc-600 hover:text-zinc-400 underline transition-colors"
+            >
+              Limpar cache total e reiniciar (Reseta configurações)
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // Removida a obrigatoriedade de seleção de plano ao logar.
+    // O usuário entra direto na plataforma como solicitado.
+    if (selectedPlanId) {
+      return <PlanSelection 
+        initialPlanId={selectedPlanId} 
+        onPlanSelected={() => {
+          setSelectedPlanId(null);
+          fetchProfile(userProfile.id, userProfile.email);
+        }} 
+      />;
+    }
+  }
+
+  if (isAdmin) {
+    return (
+      <div className="min-h-screen bg-[#050505] text-white p-4 md:p-8">
+        <AdminDashboard 
+          onBack={() => {
+            setIsAdmin(false);
+            setActiveSection('dashboard');
+          }} 
+          onLogout={handleLogout}
+        />
+      </div>
+    );
   }
 
   return (
@@ -277,7 +670,6 @@ export default function App() {
             <Settings className="w-5 h-5" />
             Configurações
           </button>
-          {/* BUG FIX: logout now calls supabase.auth.signOut() properly */}
           <button 
             onClick={handleLogout}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-zinc-500 hover:text-rose-400 hover:bg-rose-500/5 transition-all font-medium"
@@ -330,23 +722,18 @@ export default function App() {
                     {item.label}
                   </button>
                 ))}
-                <button
-                  onClick={() => {
-                    setActiveSection('profile');
-                    setIsSidebarOpen(false);
-                  }}
-                  className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all font-semibold text-zinc-500 hover:text-zinc-200 hover:bg-white/5"
-                >
-                  <Settings className="w-5 h-5" />
-                  Configurações
-                </button>
-                <button
-                  onClick={() => { handleLogout(); setIsSidebarOpen(false); }}
-                  className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all font-semibold text-zinc-500 hover:text-rose-400 hover:bg-rose-500/5"
-                >
-                  <LogOut className="w-5 h-5" />
-                  Sair
-                </button>
+                <div className="pt-6 mt-6 border-t border-white/5 space-y-2">
+                  <button 
+                    onClick={() => {
+                      setIsSidebarOpen(false);
+                      handleLogout();
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-zinc-500 hover:text-rose-400 hover:bg-rose-500/5 transition-all font-medium"
+                  >
+                    <LogOut className="w-5 h-5" />
+                    Sair
+                  </button>
+                </div>
               </nav>
             </motion.aside>
           </>
@@ -380,12 +767,12 @@ export default function App() {
               <div className="hidden md:block text-right">
                 <p className="text-sm font-bold">{userProfile?.name || 'Usuário'}</p>
                 <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
-                  {isAdmin ? 'Administrador' : userProfile?.plan_status === 'active' ? 'Premium' : 'Membro'}
+                  {isAdmin || userProfile?.plan_status === 'admin' ? 'Administrador' : userProfile?.plan_status === 'active' ? 'Premium' : 'Membro'}
                 </p>
               </div>
               <div className="w-10 h-10 rounded-xl bg-zinc-800 border border-zinc-700 overflow-hidden">
                 <img 
-                  src={userProfile?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${userProfile?.id}`} 
+                  src={userProfile?.avatar_url || undefined || `https://api.dicebear.com/7.x/avataaars/svg?seed=${userProfile?.id}`} 
                   alt="Avatar" 
                   className="w-full h-full object-cover"
                 />

@@ -23,6 +23,7 @@ DROP POLICY IF EXISTS "Authenticated users can view modules" ON public.academy_m
 DROP POLICY IF EXISTS "Authenticated users can view lessons" ON public.academy_lessons;
 DROP POLICY IF EXISTS "Authenticated users can view tools" ON public.tools;
 DROP POLICY IF EXISTS "Authenticated users can view categories" ON public.tool_categories;
+DROP POLICY IF EXISTS "Authenticated users can view prompt_categories" ON public.prompt_visual_categories;
 
 -- Remover Políticas de Admin
 DROP POLICY IF EXISTS "Admins can manage prompts" ON public.prompts;
@@ -40,6 +41,8 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   email TEXT UNIQUE,
   stripe_customer_id TEXT,
   plan_status TEXT DEFAULT 'none',
+  plan_type TEXT,
+  phone TEXT,
   is_lifetime BOOLEAN DEFAULT false,
   expires_at TIMESTAMPTZ,
   name TEXT,
@@ -105,6 +108,14 @@ CREATE TABLE IF NOT EXISTS public.tools (
 CREATE TABLE IF NOT EXISTS public.tool_categories (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
+  image_url TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.prompt_visual_categories (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  image_url TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -126,45 +137,31 @@ CREATE TABLE IF NOT EXISTS public.user_custom_prompts (
 );
 
 -- ==========================================
--- 3. SEGURANÇA (RLS)
+-- 3. FUNÇÕES (Definir antes das Políticas)
 -- ==========================================
 
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.prompts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.academy_modules ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.academy_lessons ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.tools ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.tool_categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.user_favorites ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.user_custom_prompts ENABLE ROW LEVEL SECURITY;
+-- Função para verificar se é admin (SECURITY DEFINER para evitar recursão)
+CREATE OR REPLACE FUNCTION public.check_is_admin()
+RETURNS BOOLEAN AS $$
+DECLARE
+  is_admin BOOLEAN;
+BEGIN
+  -- Buscamos o status diretamente na tabela profiles
+  SELECT (plan_status = 'admin') INTO is_admin
+  FROM public.profiles
+  WHERE id = auth.uid();
+  
+  -- Fallback para os emails mestres
+  IF is_admin IS NULL OR is_admin = false THEN
+    RETURN (
+      auth.jwt() ->> 'email' = 'admin@admin.com' OR 
+      auth.jwt() ->> 'email' = 'lucasmarcilo7@gmail.com'
+    );
+  END IF;
 
--- Criar Políticas de Usuário
-CREATE POLICY "Users can view own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);
-CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
-CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
-
-CREATE POLICY "Users can manage own favorites" ON public.user_favorites FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Users can manage own custom prompts" ON public.user_custom_prompts FOR ALL USING (auth.uid() = user_id);
-
--- Criar Políticas de Leitura Pública
-CREATE POLICY "Authenticated users can view prompts" ON public.prompts FOR SELECT USING (auth.role() = 'authenticated');
-CREATE POLICY "Authenticated users can view modules" ON public.academy_modules FOR SELECT USING (auth.role() = 'authenticated');
-CREATE POLICY "Authenticated users can view lessons" ON public.academy_lessons FOR SELECT USING (auth.role() = 'authenticated');
-CREATE POLICY "Authenticated users can view tools" ON public.tools FOR SELECT USING (auth.role() = 'authenticated');
-CREATE POLICY "Authenticated users can view categories" ON public.tool_categories FOR SELECT USING (auth.role() = 'authenticated');
-
--- Criar Políticas de Admin
-CREATE POLICY "Admins can manage prompts" ON public.prompts FOR ALL USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND plan_status = 'admin'));
-CREATE POLICY "Admins can manage modules" ON public.academy_modules FOR ALL USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND plan_status = 'admin'));
-CREATE POLICY "Admins can manage lessons" ON public.academy_lessons FOR ALL USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND plan_status = 'admin'));
-CREATE POLICY "Admins can manage tools" ON public.tools FOR ALL USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND plan_status = 'admin'));
-CREATE POLICY "Admins can manage categories" ON public.tool_categories FOR ALL USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND plan_status = 'admin'));
-CREATE POLICY "Admins can view all profiles" ON public.profiles FOR SELECT USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND plan_status = 'admin'));
-CREATE POLICY "Admins can update all profiles" ON public.profiles FOR UPDATE USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND plan_status = 'admin'));
-
--- ==========================================
--- 4. FUNÇÕES E AUTOMAÇÃO
--- ==========================================
+  RETURN is_admin;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- Função para criar perfil automaticamente no cadastro
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -172,8 +169,7 @@ RETURNS TRIGGER AS $$
 DECLARE
   initial_status TEXT;
 BEGIN
-  -- Definir status inicial: admin para o email específico, 'none' para os outros
-  IF NEW.email = 'lucasmarcilo7@gmail.com' THEN
+  IF NEW.email = 'lucasmarcilo7@gmail.com' OR NEW.email = 'admin@admin.com' THEN
     initial_status := 'admin';
   ELSE
     initial_status := 'none';
@@ -191,10 +187,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-
 -- Função para atualizar data de modificação
 CREATE OR REPLACE FUNCTION public.handle_updated_at()
 RETURNS TRIGGER AS $$
@@ -203,6 +195,54 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+-- ==========================================
+-- 4. SEGURANÇA (RLS)
+-- ==========================================
+
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.prompts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.academy_modules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.academy_lessons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tools ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tool_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.prompt_visual_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_favorites ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_custom_prompts ENABLE ROW LEVEL SECURITY;
+
+-- Criar Políticas de Usuário
+CREATE POLICY "Users can view own profile" ON public.profiles FOR SELECT USING (auth.uid() = id OR check_is_admin());
+CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id OR check_is_admin());
+CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
+
+CREATE POLICY "Users can manage own favorites" ON public.user_favorites FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Users can manage own custom prompts" ON public.user_custom_prompts FOR ALL USING (auth.uid() = user_id);
+
+-- Criar Políticas de Leitura Pública
+CREATE POLICY "Authenticated users can view prompts" ON public.prompts FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Authenticated users can view modules" ON public.academy_modules FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Authenticated users can view lessons" ON public.academy_lessons FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Authenticated users can view tools" ON public.tools FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Authenticated users can view categories" ON public.tool_categories FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Authenticated users can view prompt_categories" ON public.prompt_visual_categories FOR SELECT USING (auth.role() = 'authenticated');
+
+-- Criar Políticas de Admin
+CREATE POLICY "Admins can manage prompts" ON public.prompts FOR ALL USING (check_is_admin()) WITH CHECK (check_is_admin());
+CREATE POLICY "Admins can manage modules" ON public.academy_modules FOR ALL USING (check_is_admin()) WITH CHECK (check_is_admin());
+CREATE POLICY "Admins can manage lessons" ON public.academy_lessons FOR ALL USING (check_is_admin()) WITH CHECK (check_is_admin());
+CREATE POLICY "Admins can manage tools" ON public.tools FOR ALL USING (check_is_admin()) WITH CHECK (check_is_admin());
+CREATE POLICY "Admins can manage categories" ON public.tool_categories FOR ALL USING (check_is_admin()) WITH CHECK (check_is_admin());
+CREATE POLICY "Admins can manage prompt_categories" ON public.prompt_visual_categories FOR ALL USING (check_is_admin()) WITH CHECK (check_is_admin());
+CREATE POLICY "Admins can view all profiles" ON public.profiles FOR SELECT USING (check_is_admin());
+CREATE POLICY "Admins can update all profiles" ON public.profiles FOR UPDATE USING (check_is_admin());
+
+-- ==========================================
+-- 5. TRIGGERS
+-- ==========================================
+
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 CREATE TRIGGER set_profiles_updated_at
 BEFORE UPDATE ON public.profiles

@@ -3,29 +3,25 @@ import { Check, Star, ArrowRight, Play, Zap, Shield, Users, MessageSquare, Chevr
 import { motion, AnimatePresence } from 'motion/react';
 import Logo from './Logo';
 
-const PLANS = [
-  {
-    name: "Mensal",
-    price: "R$ 47",
-    period: "/mês",
-    tagline: "Ideal para quem quer testar",
-    description: "Acesso completo para começar sua jornada hoje.",
-    features: ["Biblioteca Completa de Prompts", "Acesso Básico à Academia", "Acesso ao Toolbox", "Suporte da Comunidade"],
-    cta: "Começar Mensal",
-    highlight: false
-  },
-  {
-    name: "Vitalício",
-    price: "R$ 197",
-    period: " único",
-    tagline: "OFERTA DE LANÇAMENTO",
-    badge: "ECONOMIA DE 80%",
-    description: "Acesso Vitalício ao Ecossistema Uncut. Todas as atualizações futuras inclusas. Sem taxas escondidas.",
-    features: ["Tudo no Mensal", "Masterclasses Exclusivas", "Suporte Direto", "Atualizações Vitalícias", "Mastermind Privado"],
-    cta: "QUERO ACESSO VITALÍCIO",
-    highlight: true
-  }
-];
+const PLAN = {
+  id: "lifetime",
+  name: "Acesso Vitalício",
+  price: "R$ 197",
+  period: " único",
+  tagline: "OFERTA DE LANÇAMENTO",
+  badge: "ECONOMIA DE 80%",
+  description: "Pague uma única vez e tenha acesso a todos os conteúdos atuais e futuros da plataforma para sempre. Sem mensalidades, sem surpresas.",
+  features: [
+    "Biblioteca Completa de Prompts",
+    "Academia de Criadores Completa",
+    "Acesso ao Toolbox",
+    "Masterclasses Exclusivas",
+    "Suporte Direto",
+    "Atualizações Vitalícias",
+    "Mastermind Privado"
+  ],
+  cta: "QUERO ACESSO VITALÍCIO",
+};
 
 const FAQS = [
   { 
@@ -125,7 +121,7 @@ function AccordionItem({ question, answer }: { question: string, answer: string,
   );
 }
 
-export default function LandingPage({ onGetStarted }: { onGetStarted: (mode: 'login' | 'signup') => void }) {
+export default function LandingPage({ onGetStarted, isLoggedIn = false }: { onGetStarted: (mode: 'login' | 'signup', planId?: string) => void, isLoggedIn?: boolean }) {
   return (
     <div className="bg-[#050505] text-white selection:bg-hot-orange/30">
       {/* Navbar */}
@@ -141,7 +137,7 @@ export default function LandingPage({ onGetStarted }: { onGetStarted: (mode: 'lo
             onClick={() => onGetStarted('login')}
             className="px-6 py-2.5 rounded-xl bg-white text-black font-bold text-sm hover:bg-zinc-200 transition-colors"
           >
-            Entrar
+            ENTRAR
           </button>
         </div>
       </nav>
@@ -191,9 +187,6 @@ export default function LandingPage({ onGetStarted }: { onGetStarted: (mode: 'lo
                 className="w-full sm:w-auto px-10 py-5 rounded-2xl hot-gradient text-white font-black text-xl shadow-2xl shadow-hot-orange/30 animate-pulse-hot transition-transform flex items-center justify-center gap-2"
               >
                 QUERO ACESSO IMEDIATO <ArrowRight className="w-6 h-6" />
-              </button>
-              <button className="w-full sm:w-auto px-10 py-5 rounded-2xl bg-white/5 border border-white/10 text-white font-bold text-xl hover:bg-white/10 transition-all flex items-center justify-center gap-2">
-                <Play className="w-5 h-5 fill-white" /> Ver Demo
               </button>
             </motion.div>
 
@@ -451,64 +444,51 @@ export default function LandingPage({ onGetStarted }: { onGetStarted: (mode: 'lo
       <section id="pricing" className="py-32 px-6">
         <div className="max-w-7xl mx-auto text-center space-y-16">
           <div className="space-y-4">
-            <h2 className="text-4xl md:text-6xl font-display font-black">Preços Simples e <span className="hot-text-gradient">Transparentes</span></h2>
-            <p className="text-zinc-400 text-lg">Escolha o plano que melhor se adapta à sua jornada.</p>
+            <h2 className="text-4xl md:text-6xl font-display font-black">Preço Simples e <span className="hot-text-gradient">Transparente</span></h2>
+            <p className="text-zinc-400 text-lg">Uma única decisão. Acesso para sempre.</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-            {PLANS.map((plan) => (
-              <div 
-                key={plan.name}
-                className={`relative p-8 rounded-[2.5rem] border transition-all ${
-                  plan.highlight 
-                  ? 'bg-zinc-900 border-hot-orange/50 shadow-2xl shadow-hot-orange/10 scale-105 z-10' 
-                  : 'bg-zinc-900/50 border-white/5 hover:border-white/10'
-                }`}
-              >
-                {plan.highlight && (
-                  <span className="absolute -top-4 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-hot-orange text-white text-[10px] font-black uppercase tracking-widest">
-                    Mais Popular
-                  </span>
-                )}
-                <div className="space-y-6 text-left">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-2xl font-bold">{plan.name}</h3>
-                      {plan.badge && (
-                        <span className="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-black uppercase tracking-widest">
-                          {plan.badge}
-                        </span>
-                      )}
-                    </div>
-                    {plan.tagline && <p className="text-hot-orange text-xs font-bold uppercase tracking-widest mt-2">{plan.tagline}</p>}
-                    <p className="text-zinc-400 text-sm mt-1">{plan.description}</p>
+          <div className="max-w-lg mx-auto">
+            <div className="relative p-10 rounded-[2.5rem] border bg-zinc-900 border-hot-orange/50 shadow-2xl shadow-hot-orange/10">
+              <span className="absolute -top-4 left-1/2 -translate-x-1/2 px-6 py-1.5 rounded-full bg-hot-orange text-white text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
+                🔥 Oferta de Lançamento
+              </span>
+              <div className="space-y-8 text-left">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-3xl font-bold">{PLAN.name}</h3>
+                    <span className="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-black uppercase tracking-widest">
+                      {PLAN.badge}
+                    </span>
                   </div>
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-5xl font-display font-black">{plan.price}</span>
-                    <span className="text-zinc-500 font-medium">{plan.period}</span>
-                  </div>
-                  <ul className="space-y-4">
-                    {plan.features.map(feature => (
-                      <li key={feature} className="flex items-center gap-3 text-sm text-zinc-300">
-                        <div className="w-5 h-5 rounded-full bg-hot-orange/10 flex items-center justify-center text-hot-orange">
-                          <Check className="w-3 h-3" />
-                        </div>
-                        {feature}
-                      </li>
-                    ))}
-                  </ul>
-                  <button 
-                    onClick={() => onGetStarted('signup')}
-                    className={`w-full py-4 rounded-2xl font-black text-lg transition-all ${
-                    plan.highlight 
-                    ? 'hot-gradient text-white shadow-lg shadow-hot-orange/20' 
-                    : 'bg-white text-black hover:bg-zinc-200'
-                  }`}>
-                    {plan.cta}
-                  </button>
+                  <p className="text-hot-orange text-xs font-bold uppercase tracking-widest mt-2">{PLAN.tagline}</p>
+                  <p className="text-zinc-400 text-sm mt-2">{PLAN.description}</p>
                 </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-6xl font-display font-black">{PLAN.price}</span>
+                  <span className="text-zinc-500 font-medium text-lg">{PLAN.period}</span>
+                </div>
+                <ul className="space-y-4">
+                  {PLAN.features.map(feature => (
+                    <li key={feature} className="flex items-center gap-3 text-sm text-zinc-300">
+                      <div className="w-5 h-5 rounded-full bg-hot-orange/10 flex items-center justify-center text-hot-orange shrink-0">
+                        <Check className="w-3 h-3" />
+                      </div>
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => onGetStarted('signup', PLAN.id)}
+                  className="w-full py-5 rounded-2xl font-black text-xl hot-gradient text-white shadow-lg shadow-hot-orange/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                >
+                  {PLAN.cta}
+                </button>
+                <p className="text-center text-zinc-500 text-xs">
+                  💳 Pagamento 100% seguro · Sem mensalidades · Sem renovação automática
+                </p>
               </div>
-            ))}
+            </div>
           </div>
         </div>
       </section>

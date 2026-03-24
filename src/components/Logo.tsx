@@ -1,4 +1,5 @@
 import React from 'react';
+import { supabase } from '../lib/supabase';
 
 interface LogoProps {
   className?: string;
@@ -21,16 +22,41 @@ export default function Logo({
   const [customHeight, setCustomHeight] = React.useState<number | null>(null);
 
   React.useEffect(() => {
-    const loadSettings = () => {
-      if (!src) {
-        const savedLogo = localStorage.getItem('hotuncut_logo_url');
-        if (savedLogo) setCustomLogo(savedLogo);
-      } else {
-        setCustomLogo(src);
-      }
-
+    const loadSettings = async () => {
+      // Primeiro tenta do localStorage (cache rápido)
+      const savedLogo = localStorage.getItem('hotuncut_logo_url');
       const savedHeight = localStorage.getItem('hotuncut_logo_height');
+      
+      if (savedLogo) setCustomLogo(savedLogo);
       if (savedHeight) setCustomHeight(parseInt(savedHeight));
+
+      // Depois tenta do Supabase para persistência real
+      try {
+        const { data, error } = await supabase
+          .from('site_settings')
+          .select('*')
+          .eq('id', 'global')
+          .single();
+
+        if (data && !error) {
+          if (data.logo_url) {
+            setCustomLogo(data.logo_url);
+            localStorage.setItem('hotuncut_logo_url', data.logo_url);
+          }
+          if (data.logo_height) {
+            setCustomHeight(data.logo_height);
+            localStorage.setItem('hotuncut_logo_height', data.logo_height.toString());
+          }
+        } else if (!savedLogo) {
+          // Fallback se não houver nada no banco nem no cache
+          setCustomLogo('https://picsum.photos/seed/hotuncut/400/100');
+        }
+      } catch (err) {
+        console.error('Error loading site settings:', err);
+        if (!savedLogo) {
+          setCustomLogo('https://picsum.photos/seed/hotuncut/400/100');
+        }
+      }
     };
 
     loadSettings();
